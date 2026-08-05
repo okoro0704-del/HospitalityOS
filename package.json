@@ -1,0 +1,30 @@
+{
+  "name": "hospitalityos",
+  "private": true,
+  "version": "1.0.0",
+  "description": "HospitalityOS V1 — Operating system for hospitality, leisure, tourism, and experiences",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,guest,staff -c teal,cyan,magenta \"npm:dev:api\" \"npm:dev:guest\" \"npm:dev:staff\"",
+    "dev:api": "npm run dev -w @hospitalityos/api",
+    "dev:guest": "npm run dev -w @hospitalityos/guest-pwa",
+    "dev:staff": "npm run dev -w @hospitalityos/staff-web",
+    "build": "npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/api && npm run build -w @hospitalityos/guest-pwa && npm run build -w @hospitalityos/staff-web",
+    "setup": "npm install && npm run build -w @hospitalityos/shared && npm run db:generate && npm run db:push:dev && npm run db:seed",
+    "db:generate": "npm run db:generate -w @hospitalityos/api",
+    "db:push": "npm run db:push -w @hospitalityos/api",
+    "db:push:dev": "npm run db:push:dev -w @hospitalityos/api",
+    "db:seed": "npm run db:seed -w @hospitalityos/api",
+    "test": "npm run test -w @hospitalityos/api",
+    "typecheck": "npm run build -w @hospitalityos/shared && npm run typecheck -w @hospitalityos/api && npm run typecheck -w @hospitalityos/guest-pwa && npm run typecheck -w @hospitalityos/staff-web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

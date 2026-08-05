@@ -1,0 +1,35 @@
+{
+  "name": "@hospitalityos/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/index.ts",
+    "build": "tsc",
+    "start": "node --env-file=../../.env dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:push:dev": "prisma db push",
+    "db:seed": "tsx --env-file=../../.env prisma/seed.ts",
+    "test": "tsx --env-file=../../.env --test --test-concurrency=1 test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.0.1",
+    "@hospitalityos/shared": "*",
+    "@prisma/client": "^6.5.0",
+    "fastify": "^5.2.1",
+    "jose": "^6.2.7",
+    "prisma": "^6.5.0",
+    "tsx": "^4.19.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  },
+  "prisma": {
+    "seed": "tsx --env-file=../../.env prisma/seed.ts"
+  }
+}

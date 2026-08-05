@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.db
+*.db-journal
+.DS_Store
+Thumbs.db
+coverage/
+.turbo/
+*.log
+.keys/
+apps/api/prisma/dev.db
+apps/api/prisma/test.db
+.vite/
+*.tsbuildinfo
