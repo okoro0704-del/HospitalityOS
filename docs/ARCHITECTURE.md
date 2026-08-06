@@ -133,9 +133,94 @@ Module-gated fitness ops on Booking + Commerce:
 
 See [GYM_MODULE.md](./GYM_MODULE.md), [MEMBERSHIP_MODEL.md](./MEMBERSHIP_MODEL.md), [FITNESS_BOOKING.md](./FITNESS_BOOKING.md).
 
+## Sprint 7 — Spa & Wellness
+
+Module-gated spa ops on Booking + Commerce:
+
+- Treatments / variants → commerce offerings
+- Therapists & rooms → bookable resources; appointments → Booking
+- Wellness facility sessions, packages, memberships
+- Role-gated consultations & treatment notes
+- Staff `/spa/*` and Guest `/spa/*`
+
+See [SPA_MODULE.md](./SPA_MODULE.md), [SPA_BOOKING.md](./SPA_BOOKING.md), [TREATMENT_CATALOG.md](./TREATMENT_CATALOG.md).
+
+## Sprint 8 — Events & Venues
+
+Module-gated events ops on Booking + Commerce:
+
+- Venues / areas → bookable resources; venue rental → Booking
+- Events, sessions, ticket types → Commerce products
+- Atomic capacity + seat claims for oversale protection
+- Staff `/events/*` and Guest `/events/*`
+
+See [EVENTS_MODULE.md](./EVENTS_MODULE.md), [TICKETING.md](./TICKETING.md), [SEATING.md](./SEATING.md).
+
+## Sprint 9 — Cinema & Entertainment
+
+Module-gated cinema ops on Booking + Commerce:
+
+- Screens → bookable resources; showtimes reserve screens via Booking
+- Ticket types & concessions → Commerce offerings
+- Assigned seating, temporary holds, atomic last-seat/ticket protection
+- Staff `/cinema/*` and Guest `/cinema/*`
+
+See [CINEMA_MODULE.md](./CINEMA_MODULE.md), [SHOWTIME_MODEL.md](./SHOWTIME_MODEL.md), [SEAT_HOLDS.md](./SEAT_HOLDS.md).
+
+## Sprint 10 — Operations & Inventory
+
+Shared operational foundation (not an ERP):
+
+- Locations, items, balances, transactions, transfers, stock counts
+- Reorder alerts, suppliers, purchase requests
+- Assets, maintenance, operational tasks
+- Optional Commerce product → inventory item link
+- Staff `/operations/*` (no guest inventory UI)
+
+See [OPERATIONS.md](./OPERATIONS.md), [INVENTORY.md](./INVENTORY.md), [INVENTORY_TRANSACTIONS.md](./INVENTORY_TRANSACTIONS.md).
+
+## Sprint 11 — CRM & Customer Management
+
+Shared customer relationship layer (not an identity provider):
+
+- Unified `Customer` + preferences, tags, notes, consent, segments
+- Cross-vertical timeline via providers (bookings, stays, dining, spa, events, cinema)
+- Loyalty foundation without token integration
+- Staff `/customers/*` and Guest `/profile`
+- TrustID/LifeOS references only (`externalIdentityRef` / `trustId` / `lifeosUserId`)
+
+See [CRM.md](./CRM.md), [CUSTOMER_MODEL.md](./CUSTOMER_MODEL.md), [CUSTOMER_TIMELINE.md](./CUSTOMER_TIMELINE.md), [CUSTOMER_PRIVACY.md](./CUSTOMER_PRIVACY.md).
+
+## Sprint 12 — Communications & Notifications
+
+Shared communications engine (not per-vertical inboxes):
+
+- Event → rule → template → channel adapter → delivery
+- Functional in-app; mock email/SMS/push; WhatsApp interface only
+- Consent + preference enforcement for marketing
+- Idempotent deliveries, schedules, bounded retries
+- Staff `/notifications/*` and Guest `/notifications`
+
+See [NOTIFICATIONS.md](./NOTIFICATIONS.md), [COMMUNICATION_ENGINE.md](./COMMUNICATION_ENGINE.md), [EVENT_DRIVEN_NOTIFICATIONS.md](./EVENT_DRIVEN_NOTIFICATIONS.md).
+
+## Sprint 13 — Payments & Billing
+
+Shared billing foundation (not per-vertical payment systems):
+
+- Commerce → billable items → invoice → payment intent → provider → payment → settlement
+- Integer minor-unit money + multi-currency
+- Mock provider; card/bank/wallet/token interfaces for future adapters
+- Cash, refunds, receipts, tax rules, credit notes, webhook idempotency
+- Staff `/billing/*` and Guest `/payments`, `/invoices`, `/receipts`
+
+See [PAYMENTS.md](./PAYMENTS.md), [BILLING.md](./BILLING.md), [PAYMENT_PROVIDERS.md](./PAYMENT_PROVIDERS.md), [PAYMENT_SECURITY.md](./PAYMENT_SECURITY.md).
+
 Still out of scope:
 
-- Payments, accounting, token integration
-- POS / turnstile / biometric access hardware
+- Real card/bank/mobile-money processors
+- Cryptocurrency / token network / blockchain
+- Full accounting ledger / payroll
+- Complex tax compliance engines
+- Authentication / identity verification
 - LifeOS Business Portal staff SSO
 - White-label custom domains

@@ -11,6 +11,7 @@ export const MODULE_IDS = [
   "events",
   "ticketing",
   "venue_booking",
+  "cinema",
   "gym_membership",
   "fitness_classes",
   "spa_services",
@@ -28,6 +29,7 @@ export const MODULE_IDS = [
   "analytics",
   "reporting",
   "notifications",
+  "billing",
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
@@ -85,21 +87,21 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
   },
   events: {
     id: "events",
-    name: "Events",
-    description: "Event planning and schedule management",
+    name: "Events & Venues",
+    description: "Venues, ticketed events, sessions, and venue rental",
     category: "events",
     staffNavKey: "events",
     guestNavKey: "events",
-    version: "1.0.0",
+    version: "2.0.0",
   },
   ticketing: {
     id: "ticketing",
     name: "Ticketing",
-    description: "Ticket sales and entry validation",
+    description: "Ticket sales, capacity, and check-in",
     category: "events",
     staffNavKey: "ticketing",
     guestNavKey: "tickets",
-    version: "1.0.0",
+    version: "2.0.0",
   },
   venue_booking: {
     id: "venue_booking",
@@ -108,6 +110,15 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
     category: "events",
     staffNavKey: "venues",
     guestNavKey: "venues",
+    version: "2.0.0",
+  },
+  cinema: {
+    id: "cinema",
+    name: "Cinema & Entertainment",
+    description: "Screens, showtimes, seating, tickets, and concessions",
+    category: "events",
+    staffNavKey: "cinema",
+    guestNavKey: "cinema",
     version: "1.0.0",
   },
   gym_membership: {
@@ -130,12 +141,12 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
   },
   spa_services: {
     id: "spa_services",
-    name: "Spa Services",
-    description: "Spa treatments and therapist scheduling",
+    name: "Spa & Wellness",
+    description: "Treatments, therapists, rooms, packages, and wellness facilities",
     category: "wellness",
     staffNavKey: "spa",
     guestNavKey: "spa",
-    version: "1.0.0",
+    version: "2.0.0",
   },
   beauty_appointments: {
     id: "beauty_appointments",
@@ -175,11 +186,11 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
   },
   inventory: {
     id: "inventory",
-    name: "Inventory",
-    description: "Stock levels and supply tracking",
+    name: "Operations & Inventory",
+    description: "Shared inventory, assets, maintenance, and operational tasks",
     category: "operations",
-    staffNavKey: "inventory",
-    version: "1.0.0",
+    staffNavKey: "operations",
+    version: "2.0.0",
   },
   staff_management: {
     id: "staff_management",
@@ -191,11 +202,12 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
   },
   customer_management: {
     id: "customer_management",
-    name: "Customer Management",
-    description: "Customer profiles and history",
+    name: "CRM & Customer Management",
+    description: "Unified customer profiles, timeline, segments, and consent",
     category: "operations",
     staffNavKey: "customers",
-    version: "1.0.0",
+    guestNavKey: "profile",
+    version: "2.0.0",
   },
   messaging: {
     id: "messaging",
@@ -251,11 +263,20 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
   },
   notifications: {
     id: "notifications",
-    name: "Notifications",
-    description: "Push and in-app notifications",
+    name: "Communications & Notifications",
+    description: "In-app notifications, templates, rules, and channel adapters",
     category: "core",
     staffNavKey: "notifications",
     guestNavKey: "notifications",
+    version: "2.0.0",
+  },
+  billing: {
+    id: "billing",
+    name: "Payments & Billing",
+    description: "Invoices, payments, refunds, taxes, and settlements",
+    category: "core",
+    staffNavKey: "billing",
+    guestNavKey: "payments",
     version: "1.0.0",
   },
 };
@@ -277,6 +298,24 @@ export const STAFF_ROLES = [
   "operations",
   "trainer",
   "instructor",
+  "spa_manager",
+  "reception",
+  "spa_therapist",
+  "wellness_instructor",
+  "event_manager",
+  "venue_manager",
+  "event_staff",
+  "checkin_staff",
+  "cinema_manager",
+  "projection_staff",
+  "concession_staff",
+  "inventory_manager",
+  "storekeeper",
+  "maintenance_staff",
+  "crm_manager",
+  "communications_manager",
+  "billing_manager",
+  "billing_admin",
   "viewer",
 ] as const;
 
@@ -340,11 +379,17 @@ export interface CustomerPublic {
   id: string;
   tenantId: string;
   displayName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  preferredName?: string | null;
   email?: string | null;
   phone?: string | null;
+  preferredLanguage?: string | null;
+  timezone?: string | null;
   lifeosUserId?: string | null;
   trustId?: string | null;
-  status: "active" | "blocked";
+  externalIdentityRef?: string | null;
+  status: "active" | "blocked" | "inactive";
   preferences?: Record<string, unknown>;
   loyaltyPlaceholder?: Record<string, unknown>;
   createdAt: string;
@@ -840,4 +885,482 @@ export const FITNESS_AREA_TYPES = [
   "other",
 ] as const;
 export type FitnessAreaType = (typeof FITNESS_AREA_TYPES)[number];
+
+/* ── Spa & Wellness Module (Sprint 7) ───────────────────────── */
+
+export const SPA_ROOM_TYPES = [
+  "massage",
+  "facial",
+  "couples",
+  "vip",
+  "consultation",
+  "other",
+] as const;
+export type SpaRoomType = (typeof SPA_ROOM_TYPES)[number];
+
+export const WELLNESS_AREA_TYPES = [
+  "sauna",
+  "steam",
+  "jacuzzi",
+  "pool",
+  "meditation",
+  "wellness",
+  "other",
+] as const;
+export type WellnessAreaType = (typeof WELLNESS_AREA_TYPES)[number];
+
+export const SPA_APPOINTMENT_STATUSES = [
+  "draft",
+  "confirmed",
+  "checked_in",
+  "in_progress",
+  "completed",
+  "cancelled",
+  "no_show",
+] as const;
+export type SpaAppointmentStatus = (typeof SPA_APPOINTMENT_STATUSES)[number];
+
+export const SPA_ROOM_STATUSES = [
+  "available",
+  "occupied",
+  "cleaning",
+  "maintenance",
+  "out_of_service",
+] as const;
+export type SpaRoomStatus = (typeof SPA_ROOM_STATUSES)[number];
+
+/** Roles allowed to read/write consultation & treatment notes. */
+export const SPA_SENSITIVE_NOTE_ROLES = [
+  "owner",
+  "admin",
+  "spa_manager",
+  "spa_therapist",
+] as const;
+
+/* ── Events & Venues Module (Sprint 8) ──────────────────────── */
+
+export const EVENT_STATUSES = [
+  "draft",
+  "published",
+  "open",
+  "sold_out",
+  "in_progress",
+  "completed",
+  "cancelled",
+  "archived",
+] as const;
+export type EventStatus = (typeof EVENT_STATUSES)[number];
+
+export const TICKET_STATUSES = [
+  "reserved",
+  "confirmed",
+  "cancelled",
+  "used",
+  "refunded",
+] as const;
+export type TicketStatus = (typeof TICKET_STATUSES)[number];
+
+export const CHECKIN_STATUSES = [
+  "not_checked_in",
+  "checked_in",
+  "cancelled",
+  "no_show",
+] as const;
+export type CheckInStatus = (typeof CHECKIN_STATUSES)[number];
+
+export const VENUE_TYPES = [
+  "ballroom",
+  "conference_hall",
+  "wedding_hall",
+  "auditorium",
+  "outdoor",
+  "rooftop",
+  "exhibition_hall",
+  "meeting_room",
+  "studio",
+  "theatre",
+  "other",
+] as const;
+export type VenueType = (typeof VENUE_TYPES)[number];
+
+export const SEATING_MODES = ["general_admission", "assigned"] as const;
+export type SeatingMode = (typeof SEATING_MODES)[number];
+
+/* ── Cinema & Entertainment Module (Sprint 9) ───────────────── */
+
+export const SHOWTIME_STATUSES = [
+  "draft",
+  "scheduled",
+  "on_sale",
+  "sold_out",
+  "in_progress",
+  "completed",
+  "cancelled",
+] as const;
+export type ShowtimeStatus = (typeof SHOWTIME_STATUSES)[number];
+
+export const SCREEN_TYPES = [
+  "standard",
+  "premium",
+  "imax",
+  "vip",
+  "private",
+  "outdoor",
+  "other",
+] as const;
+export type ScreenType = (typeof SCREEN_TYPES)[number];
+
+export const CINEMA_SEAT_STATUSES = [
+  "available",
+  "held",
+  "booked",
+  "blocked",
+  "unavailable",
+] as const;
+export type CinemaSeatStatus = (typeof CINEMA_SEAT_STATUSES)[number];
+
+export const CONTENT_RATINGS = [
+  "G",
+  "PG",
+  "PG-13",
+  "R",
+  "NC-17",
+  "U",
+  "12A",
+  "15",
+  "18",
+  "NR",
+] as const;
+export type ContentRating = (typeof CONTENT_RATINGS)[number];
+
+export const CONCESSION_ORDER_STATUSES = [
+  "draft",
+  "submitted",
+  "preparing",
+  "ready",
+  "collected",
+  "cancelled",
+] as const;
+export type ConcessionOrderStatus = (typeof CONCESSION_ORDER_STATUSES)[number];
+
+export const SEAT_HOLD_STATUSES = ["active", "converted", "expired", "released"] as const;
+export type SeatHoldStatus = (typeof SEAT_HOLD_STATUSES)[number];
+
+/* ── Operations & Inventory (Sprint 10) ─────────────────────── */
+
+export const INVENTORY_UNITS = [
+  "piece",
+  "box",
+  "pack",
+  "kilogram",
+  "gram",
+  "litre",
+  "millilitre",
+  "meter",
+] as const;
+export type InventoryUnit = (typeof INVENTORY_UNITS)[number];
+
+export const INVENTORY_TX_TYPES = [
+  "purchase",
+  "receipt",
+  "consumption",
+  "adjustment",
+  "transfer",
+  "damage",
+  "waste",
+  "return",
+  "stock_count",
+] as const;
+export type InventoryTxType = (typeof INVENTORY_TX_TYPES)[number];
+
+export const PURCHASE_REQUEST_STATUSES = [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+  "completed",
+  "cancelled",
+] as const;
+export type PurchaseRequestStatus = (typeof PURCHASE_REQUEST_STATUSES)[number];
+
+export const ASSET_STATUSES = [
+  "active",
+  "available",
+  "assigned",
+  "maintenance",
+  "damaged",
+  "retired",
+] as const;
+export type AssetStatus = (typeof ASSET_STATUSES)[number];
+
+export const ASSET_MAINTENANCE_STATUSES = ["open", "in_progress", "resolved", "closed"] as const;
+export type AssetMaintenanceStatus = (typeof ASSET_MAINTENANCE_STATUSES)[number];
+
+export const OPS_TASK_STATUSES = [
+  "open",
+  "assigned",
+  "in_progress",
+  "completed",
+  "cancelled",
+] as const;
+export type OpsTaskStatus = (typeof OPS_TASK_STATUSES)[number];
+
+export const STOCK_COUNT_STATUSES = ["draft", "in_progress", "submitted", "cancelled"] as const;
+export type StockCountStatus = (typeof STOCK_COUNT_STATUSES)[number];
+
+/* ── CRM & Customer Management (Sprint 11) ──────────────────── */
+
+export const CRM_NOTE_VISIBILITIES = ["internal", "restricted"] as const;
+export type CrmNoteVisibility = (typeof CRM_NOTE_VISIBILITIES)[number];
+
+export const CRM_CONSENT_STATUSES = ["granted", "withdrawn"] as const;
+export type CrmConsentStatus = (typeof CRM_CONSENT_STATUSES)[number];
+
+export const CRM_INTERACTION_TYPES = [
+  "phone_call",
+  "email",
+  "in_person",
+  "support_request",
+  "follow_up",
+  "general",
+] as const;
+export type CrmInteractionType = (typeof CRM_INTERACTION_TYPES)[number];
+
+export const CRM_FEEDBACK_STATUSES = ["new", "reviewed", "resolved", "archived"] as const;
+export type CrmFeedbackStatus = (typeof CRM_FEEDBACK_STATUSES)[number];
+
+export const CRM_EVENT_TYPES = [
+  "BOOKING_CREATED",
+  "BOOKING_CANCELLED",
+  "STAY_COMPLETED",
+  "ORDER_COMPLETED",
+  "MEMBERSHIP_STARTED",
+  "CLASS_ATTENDED",
+  "SPA_APPOINTMENT_COMPLETED",
+  "EVENT_ATTENDED",
+  "CINEMA_TICKET_USED",
+  "PURCHASE",
+  "FEEDBACK",
+  "INTERACTION",
+  "VISIT",
+  "CUSTOM",
+] as const;
+export type CrmEventType = (typeof CRM_EVENT_TYPES)[number];
+
+export const LOYALTY_STATUSES = ["none", "enrolled", "active", "paused", "closed"] as const;
+export type LoyaltyStatus = (typeof LOYALTY_STATUSES)[number];
+
+/* ── Communications & Notifications (Sprint 12) ─────────────── */
+
+export const NOTIFICATION_CATEGORIES = [
+  "booking",
+  "reservation",
+  "appointment",
+  "order",
+  "payment",
+  "membership",
+  "event",
+  "cinema",
+  "accommodation",
+  "promotion",
+  "operational",
+  "security",
+  "system",
+  "marketing",
+] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+export const NOTIFICATION_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type NotificationPriority = (typeof NOTIFICATION_PRIORITIES)[number];
+
+export const NOTIFICATION_STATUSES = ["unread", "read", "archived", "expired"] as const;
+export type NotificationStatus = (typeof NOTIFICATION_STATUSES)[number];
+
+export const NOTIFICATION_CHANNELS = ["in_app", "email", "sms", "push", "whatsapp"] as const;
+export type NotificationChannelId = (typeof NOTIFICATION_CHANNELS)[number];
+
+export const NOTIFICATION_AUDIENCES = ["customer", "staff"] as const;
+export type NotificationAudience = (typeof NOTIFICATION_AUDIENCES)[number];
+
+export const DELIVERY_STATUSES = [
+  "pending",
+  "processing",
+  "sent",
+  "delivered",
+  "failed",
+  "skipped",
+  "cancelled",
+  "blocked",
+] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+export const TEMPLATE_TYPES = ["transactional", "operational", "marketing", "system"] as const;
+export type TemplateType = (typeof TEMPLATE_TYPES)[number];
+
+export const SCHEDULE_STATUSES = ["pending", "processing", "completed", "cancelled", "failed"] as const;
+export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
+
+export const COMMUNICATION_EVENT_TYPES = [
+  "BOOKING_CREATED",
+  "BOOKING_CONFIRMED",
+  "BOOKING_CANCELLED",
+  "APPOINTMENT_REMINDER",
+  "ORDER_CREATED",
+  "ORDER_READY",
+  "MEMBERSHIP_STARTED",
+  "MEMBERSHIP_EXPIRING",
+  "EVENT_TICKET_BOOKED",
+  "EVENT_REMINDER",
+  "CINEMA_SHOWTIME_REMINDER",
+  "WAITLIST_AVAILABLE",
+  "INVENTORY_LOW",
+  "MAINTENANCE_CREATED",
+  "PURCHASE_REQUEST_CREATED",
+  "STAY_BOOKED",
+  "CHECKIN_REMINDER",
+  "CHECKOUT_REMINDER",
+  "RESTAURANT_RESERVATION_CONFIRMED",
+  "CLASS_REMINDER",
+  "AFTERCARE_AVAILABLE",
+  "TICKET_CONFIRMED",
+  "SHOWTIME_REMINDER",
+  "LOW_STOCK",
+  "MAINTENANCE_ASSIGNED",
+  "FEEDBACK_REQUEST",
+  "CUSTOM",
+] as const;
+export type CommunicationEventType = (typeof COMMUNICATION_EVENT_TYPES)[number];
+
+export const ALLOWED_TEMPLATE_VARIABLES = [
+  "customer.firstName",
+  "customer.lastName",
+  "customer.displayName",
+  "business.name",
+  "booking.reference",
+  "booking.date",
+  "booking.time",
+  "venue.name",
+  "experience.name",
+  "order.reference",
+] as const;
+
+/* ── Payments & Billing (Sprint 13) ─────────────────────────── */
+
+export const SUPPORTED_CURRENCIES = ["NGN", "USD", "GBP", "EUR"] as const;
+export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
+
+/** ISO-4217 minor-unit exponents (no floating money). */
+export const CURRENCY_EXPONENTS: Record<SupportedCurrency, number> = {
+  NGN: 2,
+  USD: 2,
+  GBP: 2,
+  EUR: 2,
+};
+
+export interface Money {
+  amount: number; // integer minor units
+  currency: SupportedCurrency | string;
+}
+
+export const BILLING_ACCOUNT_STATUSES = ["active", "suspended", "closed"] as const;
+export type BillingAccountStatus = (typeof BILLING_ACCOUNT_STATUSES)[number];
+
+export const INVOICE_STATUSES = [
+  "draft",
+  "open",
+  "partially_paid",
+  "paid",
+  "void",
+  "overdue",
+] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export const PAYMENT_INTENT_STATUSES = [
+  "created",
+  "requires_action",
+  "authorized",
+  "captured",
+  "cancelled",
+  "failed",
+  "expired",
+] as const;
+export type PaymentIntentStatus = (typeof PAYMENT_INTENT_STATUSES)[number];
+
+export const PAYMENT_STATUSES = [
+  "pending",
+  "authorized",
+  "captured",
+  "cancelled",
+  "failed",
+  "refunded",
+  "partially_refunded",
+] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export const REFUND_STATUSES = [
+  "requested",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+export type RefundStatus = (typeof REFUND_STATUSES)[number];
+
+export const PAYMENT_METHOD_TYPES = ["card", "bank_transfer", "wallet", "cash", "other"] as const;
+export type PaymentMethodType = (typeof PAYMENT_METHOD_TYPES)[number];
+
+export const BILLABLE_ITEM_TYPES = [
+  "ACCOMMODATION_RESERVATION",
+  "RESTAURANT_ORDER",
+  "FITNESS_MEMBERSHIP",
+  "SPA_APPOINTMENT",
+  "EVENT_TICKET",
+  "CINEMA_TICKET",
+  "COMMERCE_ORDER",
+  "PRODUCT_PURCHASE",
+  "PACKAGE_PURCHASE",
+  "CUSTOM",
+] as const;
+export type BillableItemType = (typeof BILLABLE_ITEM_TYPES)[number];
+
+export const SETTLEMENT_STATUSES = ["pending", "processing", "settled", "failed"] as const;
+export type SettlementStatus = (typeof SETTLEMENT_STATUSES)[number];
+
+export const BILLING_PERMISSIONS = [
+  "billing.view",
+  "billing.create",
+  "billing.update",
+  "billing.refund",
+  "billing.cash",
+  "billing.settlement",
+  "billing.tax",
+  "billing.admin",
+] as const;
+export type BillingPermission = (typeof BILLING_PERMISSIONS)[number];
+
+/** Role → billing permission map (financial roles are not universal). */
+export const BILLING_ROLE_PERMISSIONS: Record<string, readonly BillingPermission[]> = {
+  owner: BILLING_PERMISSIONS,
+  admin: BILLING_PERMISSIONS,
+  billing_admin: BILLING_PERMISSIONS,
+  billing_manager: [
+    "billing.view",
+    "billing.create",
+    "billing.update",
+    "billing.refund",
+    "billing.cash",
+    "billing.settlement",
+    "billing.tax",
+  ],
+  manager: ["billing.view", "billing.create", "billing.update", "billing.cash", "billing.refund"],
+  front_desk: ["billing.view", "billing.cash"],
+  reception: ["billing.view", "billing.cash"],
+  operations: ["billing.view"],
+  viewer: ["billing.view"],
+};
+
+export function staffHasBillingPermission(role: string, permission: BillingPermission): boolean {
+  const perms = BILLING_ROLE_PERMISSIONS[role] ?? [];
+  return perms.includes(permission) || perms.includes("billing.admin");
+}
 

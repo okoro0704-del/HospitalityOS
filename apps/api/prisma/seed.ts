@@ -37,7 +37,7 @@ const tenants: SeedTenant[] = [
     primaryColor: "#0F766E",
     secondaryColor: "#134E4A",
     accentColor: "#F59E0B",
-    modules: ["accommodation", "restaurant", "events", "reservations", "customer_management", "staff_management", "notifications", "analytics"],
+    modules: ["accommodation", "restaurant", "events", "reservations", "inventory", "customer_management", "staff_management", "notifications", "billing", "analytics"],
     branchName: "Main Building",
     staffEmail: "front@sunrise.hotel",
   },
@@ -50,7 +50,7 @@ const tenants: SeedTenant[] = [
     primaryColor: "#9F1239",
     secondaryColor: "#4C0519",
     accentColor: "#FB7185",
-    modules: ["restaurant", "reservations", "promotions", "customer_management", "staff_management", "notifications"],
+    modules: ["restaurant", "reservations", "inventory", "promotions", "customer_management", "staff_management", "notifications", "billing"],
     branchName: "Downtown",
     staffEmail: "host@bella.dining",
   },
@@ -63,7 +63,7 @@ const tenants: SeedTenant[] = [
     primaryColor: "#1D4ED8",
     secondaryColor: "#1E3A8A",
     accentColor: "#22D3EE",
-    modules: ["gym_membership", "fitness_classes", "wellness_packages", "customer_management", "staff_management", "notifications", "analytics"],
+    modules: ["gym_membership", "fitness_classes", "wellness_packages", "customer_management", "staff_management", "notifications", "billing", "analytics"],
     branchName: "Central Campus",
     staffEmail: "ops@peak.fitness",
   },
@@ -76,7 +76,7 @@ const tenants: SeedTenant[] = [
     primaryColor: "#6D28D9",
     secondaryColor: "#4C1D95",
     accentColor: "#C4B5FD",
-    modules: ["spa_services", "beauty_appointments", "wellness_packages", "customer_management", "staff_management", "notifications"],
+    modules: ["spa_services", "beauty_appointments", "wellness_packages", "customer_management", "staff_management", "notifications", "billing"],
     branchName: "Wellness Wing",
     staffEmail: "care@serenity.spa",
   },
@@ -89,7 +89,7 @@ const tenants: SeedTenant[] = [
     primaryColor: "#B45309",
     secondaryColor: "#78350F",
     accentColor: "#FDE68A",
-    modules: ["venue_booking", "ticketing", "events", "customer_management", "staff_management", "notifications", "reporting"],
+    modules: ["venue_booking", "ticketing", "events", "customer_management", "staff_management", "notifications", "billing", "reporting"],
     branchName: "Grand Hall",
     staffEmail: "events@royal.centre",
   },
@@ -102,7 +102,7 @@ const tenants: SeedTenant[] = [
     primaryColor: "#111827",
     secondaryColor: "#374151",
     accentColor: "#F97316",
-    modules: ["ticketing", "events", "promotions", "customer_management", "staff_management", "notifications"],
+    modules: ["cinema", "ticketing", "promotions", "customer_management", "staff_management", "notifications", "billing"],
     branchName: "Screen Complex",
     staffEmail: "box@city.cinema",
   },
@@ -125,6 +125,7 @@ const tenants: SeedTenant[] = [
       "customer_management",
       "staff_management",
       "notifications",
+      "billing",
       "loyalty",
       "analytics",
     ],
@@ -223,6 +224,40 @@ async function main() {
 
     if (t.modules.includes("gym_membership") || t.modules.includes("fitness_classes")) {
       await seedFitness(tenant.id, t.name);
+    }
+
+    if (
+      t.modules.includes("spa_services") ||
+      t.modules.includes("beauty_appointments") ||
+      t.modules.includes("wellness_packages")
+    ) {
+      await seedSpa(tenant.id, t.name);
+    }
+
+    if (t.modules.includes("cinema")) {
+      await seedCinema(tenant.id, t.name);
+    } else if (
+      t.modules.includes("events") ||
+      t.modules.includes("ticketing") ||
+      t.modules.includes("venue_booking")
+    ) {
+      await seedEvents(tenant.id, t.name);
+    }
+
+    if (t.modules.includes("inventory")) {
+      await seedOperations(tenant.id, t.name, t.businessType);
+    }
+
+    if (t.modules.includes("customer_management")) {
+      await seedCrm(tenant.id);
+    }
+
+    if (t.modules.includes("notifications")) {
+      await seedNotifications(tenant.id);
+    }
+
+    if (t.modules.includes("billing")) {
+      await seedBilling(tenant.id);
     }
 
     console.log(`  ✓ ${t.name} (${t.slug}) — modules: ${t.modules.length}`);
@@ -791,6 +826,715 @@ async function seedFitness(tenantId: string, tenantName: string) {
       areaId: studio?.id,
       trainerId: trainer.id,
       actorKind: "system",
+    });
+  }
+}
+
+async function seedSpa(tenantId: string, tenantName: string) {
+  const {
+    createTreatment,
+    createTreatmentVariant,
+    createSpaMembershipPlan,
+    createSpaPackage,
+    ensureTherapistResource,
+    ensureRoomResource,
+  } = await import("../src/services/spa.js");
+
+  let facility = await prisma.spaFacility.findFirst({
+    where: { tenantId, code: "MAIN-SPA" },
+  });
+  if (!facility) {
+    facility = await prisma.spaFacility.create({
+      data: {
+        tenantId,
+        name: `${tenantName} Spa`,
+        code: "MAIN-SPA",
+        description: "Primary spa facility",
+        metadata: {},
+        status: "active",
+      },
+    });
+  }
+
+  let room = await prisma.treatmentRoom.findFirst({
+    where: { facilityId: facility.id, code: "MASSAGE-1" },
+  });
+  if (!room) {
+    room = await prisma.treatmentRoom.create({
+      data: {
+        tenantId,
+        facilityId: facility.id,
+        name: "Massage Room 1",
+        code: "MASSAGE-1",
+        roomType: "massage",
+        capacity: 1,
+        compatibleTreatments: [],
+        status: "available",
+        metadata: {},
+      },
+    });
+    await ensureRoomResource({ tenantId, roomId: room.id });
+  }
+
+  if ((await prisma.wellnessArea.count({ where: { facilityId: facility.id } })) === 0) {
+    await prisma.wellnessArea.create({
+      data: {
+        tenantId,
+        facilityId: facility.id,
+        name: "Sauna",
+        code: "SAUNA",
+        areaType: "sauna",
+        capacity: 8,
+        membershipRequired: false,
+        status: "active",
+        metadata: {},
+      },
+    });
+  }
+
+  let category = await prisma.treatmentCategory.findFirst({
+    where: { tenantId, code: "MASSAGE" },
+  });
+  if (!category) {
+    category = await prisma.treatmentCategory.create({
+      data: {
+        tenantId,
+        name: "Massage",
+        code: "MASSAGE",
+        description: "Bodywork treatments",
+        status: "active",
+      },
+    });
+  }
+
+  let treatment = await prisma.treatment.findFirst({
+    where: { tenantId, code: "SWEDISH" },
+  });
+  if (!treatment) {
+    treatment = await createTreatment({
+      tenantId,
+      facilityId: facility.id,
+      categoryId: category.id,
+      name: "Swedish Massage",
+      code: "SWEDISH",
+      description: "Classic full-body relaxation massage",
+      durationMinutes: 60,
+      price: 90,
+      requiredRoomTypes: ["massage"],
+      requiredSpecialties: ["massage"],
+      actorKind: "system",
+    });
+    await createTreatmentVariant({
+      tenantId,
+      treatmentId: treatment.id,
+      name: "90 minutes",
+      code: "90",
+      durationMinutes: 90,
+      price: 130,
+      actorKind: "system",
+    });
+  }
+
+  let therapist = await prisma.spaTherapist.findFirst({
+    where: { tenantId, email: "care@serenity.spa" },
+  });
+  if (!therapist) {
+    therapist = await prisma.spaTherapist.create({
+      data: {
+        tenantId,
+        displayName: "Maya Therapist",
+        email: "care@serenity.spa",
+        bio: "Licensed massage therapist",
+        workingHours: {},
+        status: "active",
+        specialties: {
+          create: [{ tenantId, name: "Massage", code: "massage" }],
+        },
+      },
+    });
+    await ensureTherapistResource({ tenantId, therapistId: therapist.id });
+    await prisma.therapistTreatmentLink.create({
+      data: {
+        tenantId,
+        therapistId: therapist.id,
+        treatmentId: treatment.id,
+        status: "active",
+      },
+    });
+  }
+
+  if ((await prisma.spaMembershipPlan.count({ where: { tenantId } })) === 0) {
+    await createSpaMembershipPlan({
+      tenantId,
+      name: "Spa Monthly",
+      code: "MONTHLY",
+      description: "Monthly spa access with member rates",
+      durationDays: 30,
+      price: 120,
+      benefits: ["member_rates", "sauna_access"],
+      actorKind: "system",
+    });
+  }
+
+  if ((await prisma.spaPackage.count({ where: { tenantId } })) === 0) {
+    await createSpaPackage({
+      tenantId,
+      name: "Relax Bundle",
+      code: "RELAX",
+      description: "Massage + facial package",
+      price: 160,
+      items: [{ treatmentCode: "SWEDISH", qty: 1 }],
+      actorKind: "system",
+    });
+  }
+}
+
+async function seedEvents(tenantId: string, tenantName: string) {
+  const {
+    createEventTicketType,
+    createEventSession,
+    ensureVenueResource,
+    publishEvent,
+    createEventPackage,
+    createEventAddon,
+  } = await import("../src/services/events.js");
+
+  let venue = await prisma.eventVenue.findFirst({
+    where: { tenantId, code: "GRAND" },
+  });
+  if (!venue) {
+    venue = await prisma.eventVenue.create({
+      data: {
+        tenantId,
+        name: `${tenantName} Grand Hall`,
+        code: "GRAND",
+        description: "Primary event venue",
+        venueType: "ballroom",
+        capacity: 300,
+        location: "Main Building",
+        amenities: ["av", "catering", "wifi"],
+        imageUrls: [],
+        metadata: {},
+        status: "active",
+      },
+    });
+    await ensureVenueResource({ tenantId, venueId: venue.id });
+  }
+
+  if ((await prisma.venueArea.count({ where: { venueId: venue.id } })) === 0) {
+    await prisma.venueArea.createMany({
+      data: [
+        {
+          tenantId,
+          venueId: venue.id,
+          name: "Grand Ballroom",
+          code: "BALLROOM",
+          capacity: 250,
+          status: "active",
+          metadata: {},
+        },
+        {
+          tenantId,
+          venueId: venue.id,
+          name: "Garden",
+          code: "GARDEN",
+          capacity: 80,
+          status: "active",
+          metadata: {},
+        },
+      ],
+    });
+  }
+
+  let eventType = await prisma.eventType.findFirst({
+    where: { tenantId, code: "CONFERENCE" },
+  });
+  if (!eventType) {
+    eventType = await prisma.eventType.create({
+      data: {
+        tenantId,
+        name: "Conference",
+        code: "CONFERENCE",
+        description: "Multi-session conferences",
+        status: "active",
+      },
+    });
+  }
+
+  let event = await prisma.event.findFirst({
+    where: { tenantId, code: "SUMMIT26" },
+  });
+  if (!event) {
+    const startsAt = new Date();
+    startsAt.setUTCDate(startsAt.getUTCDate() + 14);
+    startsAt.setUTCHours(9, 0, 0, 0);
+    const endsAt = new Date(startsAt);
+    endsAt.setUTCHours(17, 0, 0, 0);
+    event = await prisma.event.create({
+      data: {
+        tenantId,
+        venueId: venue.id,
+        eventTypeId: eventType.id,
+        name: `${tenantName} Summit`,
+        code: "SUMMIT26",
+        description: "Annual hospitality summit",
+        startsAt,
+        endsAt,
+        capacity: 100,
+        seatingMode: "general_admission",
+        imageUrls: [],
+        metadata: {},
+        status: "draft",
+      },
+    });
+    await createEventSession({
+      tenantId,
+      eventId: event.id,
+      name: "Day 1 Morning",
+      code: "D1AM",
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + 4 * 3600000),
+      venueId: venue.id,
+      capacity: 100,
+      actorKind: "system",
+    });
+    await createEventTicketType({
+      tenantId,
+      eventId: event.id,
+      name: "General Admission",
+      code: "GA",
+      price: 49,
+      capacity: 80,
+      actorKind: "system",
+    });
+    await createEventTicketType({
+      tenantId,
+      eventId: event.id,
+      name: "VIP",
+      code: "VIP",
+      price: 149,
+      capacity: 20,
+      actorKind: "system",
+    });
+    await publishEvent({
+      tenantId,
+      eventId: event.id,
+      actorKind: "system",
+    });
+  }
+
+  if ((await prisma.eventPackage.count({ where: { tenantId } })) === 0) {
+    await createEventPackage({
+      tenantId,
+      name: "Conference Package",
+      code: "CONF-PKG",
+      description: "Hall + catering placeholder",
+      price: 2500,
+      items: [{ kind: "venue" }, { kind: "catering" }],
+      actorKind: "system",
+    });
+  }
+
+  if ((await prisma.eventAddon.count({ where: { tenantId } })) === 0) {
+    await createEventAddon({
+      tenantId,
+      name: "Sound System",
+      code: "SOUND",
+      price: 350,
+      actorKind: "system",
+    });
+  }
+}
+
+async function seedCinema(tenantId: string, tenantName: string) {
+  const {
+    createCinemaVenue,
+    createCinemaScreen,
+    configureSeatMap,
+    createCinemaContent,
+    createShowtime,
+    openShowtimeForSale,
+    createCinemaTicketType,
+    createConcession,
+  } = await import("../src/services/cinema.js");
+
+  let venue = await prisma.cinemaVenue.findFirst({
+    where: { tenantId, code: "MAIN" },
+  });
+  if (!venue) {
+    venue = await createCinemaVenue({
+      tenantId,
+      name: `${tenantName} Complex`,
+      code: "MAIN",
+      description: "Primary cinema venue",
+      location: "Downtown",
+      actorKind: "system",
+    });
+  }
+
+  let screen = await prisma.cinemaScreen.findFirst({
+    where: { tenantId, venueId: venue.id, code: "SCR1" },
+  });
+  if (!screen) {
+    screen = await createCinemaScreen({
+      tenantId,
+      venueId: venue.id,
+      name: "Screen 1",
+      code: "SCR1",
+      screenType: "standard",
+      capacity: 48,
+      seatingMode: "assigned",
+      actorKind: "system",
+    });
+  }
+
+  if (!(await prisma.cinemaSeatMap.findUnique({ where: { screenId: screen.id } }))) {
+    const seats = [];
+    for (const row of ["A", "B", "C", "D"]) {
+      for (let n = 1; n <= 6; n++) {
+        seats.push({
+          label: `${row}${n}`,
+          rowLabel: row,
+          seatType: row === "A" ? "premium" : "standard",
+          premium: row === "A",
+        });
+      }
+    }
+    await configureSeatMap({
+      tenantId,
+      screenId: screen.id,
+      name: "Screen 1 Map",
+      sections: [{ name: "Orchestra", code: "ORCH", seats }],
+      actorKind: "system",
+    });
+  }
+
+  let content = await prisma.cinemaContent.findFirst({
+    where: { tenantId, code: "NIGHTFALL" },
+  });
+  if (!content) {
+    content = await createCinemaContent({
+      tenantId,
+      title: "Nightfall Express",
+      code: "NIGHTFALL",
+      description: "A thriller across midnight rails.",
+      runtimeMinutes: 118,
+      genre: "Thriller",
+      category: "movie",
+      rating: "PG-13",
+      language: "en",
+      actorKind: "system",
+    });
+  }
+
+  let showtime = await prisma.cinemaShowtime.findFirst({
+    where: { tenantId, contentId: content.id },
+  });
+  if (!showtime) {
+    const startsAt = new Date();
+    startsAt.setUTCDate(startsAt.getUTCDate() + 2);
+    startsAt.setUTCHours(19, 0, 0, 0);
+    const endsAt = new Date(startsAt.getTime() + 118 * 60_000);
+    showtime = await createShowtime({
+      tenantId,
+      contentId: content.id,
+      screenId: screen.id,
+      startsAt,
+      endsAt,
+      capacity: 48,
+      seatingMode: "assigned",
+      actorKind: "system",
+    });
+    await openShowtimeForSale({
+      tenantId,
+      showtimeId: showtime.id,
+      actorKind: "system",
+    });
+    await createCinemaTicketType({
+      tenantId,
+      showtimeId: showtime.id,
+      name: "General Admission",
+      code: "GA",
+      price: 12,
+      capacity: 40,
+      actorKind: "system",
+    });
+    await createCinemaTicketType({
+      tenantId,
+      showtimeId: showtime.id,
+      name: "VIP",
+      code: "VIP",
+      price: 22,
+      capacity: 8,
+      actorKind: "system",
+    });
+  }
+
+  if ((await prisma.cinemaConcession.count({ where: { tenantId } })) === 0) {
+    await createConcession({
+      tenantId,
+      venueId: venue.id,
+      name: "Large Popcorn",
+      code: "POP-L",
+      category: "snack",
+      price: 6.5,
+      actorKind: "system",
+    });
+    await createConcession({
+      tenantId,
+      venueId: venue.id,
+      name: "Soft Drink",
+      code: "DRINK",
+      category: "drink",
+      price: 3.5,
+      actorKind: "system",
+    });
+  }
+}
+
+async function seedCrm(tenantId: string) {
+  for (const tag of [
+    { name: "VIP", code: "VIP" },
+    { name: "Frequent Guest", code: "FREQ" },
+    { name: "Corporate", code: "CORP" },
+    { name: "New Customer", code: "NEW" },
+  ]) {
+    await prisma.customerTag.upsert({
+      where: { tenantId_code: { tenantId, code: tag.code } },
+      create: { tenantId, name: tag.name, code: tag.code, status: "active" },
+      update: { name: tag.name, status: "active" },
+    });
+  }
+
+  if ((await prisma.customerSegment.count({ where: { tenantId } })) === 0) {
+    await prisma.customerSegment.create({
+      data: {
+        tenantId,
+        name: "Recent visitors",
+        code: "RECENT_30",
+        description: "Created or visited in the last 30 days",
+        rules: { lastVisitDays: 30 },
+        status: "active",
+      },
+    });
+  }
+}
+
+async function seedNotifications(tenantId: string) {
+  for (const channel of ["in_app", "email", "sms", "push"]) {
+    await prisma.notificationChannelConfig.upsert({
+      where: { tenantId_channel: { tenantId, channel } },
+      create: {
+        tenantId,
+        channel,
+        enabled: channel === "in_app",
+        provider: channel === "in_app" ? "in_app" : "mock",
+        config: {},
+        status: "active",
+      },
+      update: {},
+    });
+  }
+
+  let bookingTpl = await prisma.notificationTemplate.findFirst({
+    where: { tenantId, code: "booking_confirmed" },
+    orderBy: { version: "desc" },
+  });
+  if (!bookingTpl) {
+    bookingTpl = await prisma.notificationTemplate.create({
+      data: {
+        tenantId,
+        code: "booking_confirmed",
+        name: "Booking Confirmation",
+        category: "booking",
+        channel: "in_app",
+        type: "transactional",
+        subject: "Your booking is confirmed",
+        body: "Hello {{customer.firstName}}, your booking at {{business.name}} is confirmed. Ref: {{booking.reference}}",
+        variables: ["customer.firstName", "business.name", "booking.reference"],
+        version: 1,
+        status: "active",
+      },
+    });
+  }
+
+  await prisma.notificationRule.upsert({
+    where: { tenantId_code: { tenantId, code: "booking_confirmed_inapp" } },
+    create: {
+      tenantId,
+      code: "booking_confirmed_inapp",
+      name: "Booking confirmed (in-app)",
+      eventType: "BOOKING_CONFIRMED",
+      templateId: bookingTpl.id,
+      channels: ["in_app", "email"],
+      audience: "customer",
+      category: "booking",
+      priority: "normal",
+      deepLinkTpl: "/my-bookings",
+      enabled: true,
+      delayMinutes: 0,
+      metadata: {},
+    },
+    update: { enabled: true, templateId: bookingTpl.id },
+  });
+
+  await prisma.notificationRule.upsert({
+    where: { tenantId_code: { tenantId, code: "low_stock_staff" } },
+    create: {
+      tenantId,
+      code: "low_stock_staff",
+      name: "Low stock alert",
+      eventType: "LOW_STOCK",
+      channels: ["in_app"],
+      audience: "staff",
+      category: "operational",
+      priority: "high",
+      deepLinkTpl: "/operations",
+      enabled: true,
+      delayMinutes: 0,
+      metadata: {},
+    },
+    update: { enabled: true },
+  });
+}
+
+async function seedBilling(tenantId: string) {
+  await prisma.billingTaxRule.upsert({
+    where: { tenantId_code: { tenantId, code: "VAT" } },
+    create: {
+      tenantId,
+      code: "VAT",
+      name: "VAT",
+      category: "vat",
+      jurisdiction: "NG",
+      rateBps: 750, // 7.5% configurable
+      inclusive: false,
+      status: "active",
+      metadata: {},
+    },
+    update: { status: "active" },
+  });
+}
+
+async function seedOperations(tenantId: string, tenantName: string, businessType: string) {
+  const {
+    createInventoryLocation,
+    createInventoryItem,
+    postInventoryTransaction,
+  } = await import("../src/services/operations.js");
+
+  let main = await prisma.inventoryLocation.findFirst({
+    where: { tenantId, code: "MAIN-STORE" },
+  });
+  if (!main) {
+    main = await createInventoryLocation({
+      tenantId,
+      name: "Main Store",
+      code: "MAIN-STORE",
+      description: `${tenantName} primary store`,
+      actorKind: "system",
+    });
+    await createInventoryLocation({
+      tenantId,
+      name: businessType === "restaurant" ? "Kitchen" : "Housekeeping",
+      code: businessType === "restaurant" ? "KITCHEN" : "HK",
+      parentId: main.id,
+      actorKind: "system",
+    });
+  }
+
+  if ((await prisma.inventoryCategory.count({ where: { tenantId } })) === 0) {
+    await prisma.inventoryCategory.create({
+      data: {
+        tenantId,
+        name: "Supplies",
+        code: "SUPPLIES",
+        description: "General supplies",
+      },
+    });
+  }
+
+  const category = await prisma.inventoryCategory.findFirst({
+    where: { tenantId, code: "SUPPLIES" },
+  });
+
+  let item = await prisma.inventoryItem.findFirst({
+    where: { tenantId, sku: "TOWEL-STD" },
+  });
+  if (!item) {
+    item = await createInventoryItem({
+      tenantId,
+      name: businessType === "restaurant" ? "Napkins" : "Towels",
+      sku: "TOWEL-STD",
+      categoryId: category?.id,
+      unit: "piece",
+      reorderPoint: 20,
+      actorKind: "system",
+    });
+    await postInventoryTransaction({
+      tenantId,
+      itemId: item.id,
+      locationId: main.id,
+      type: "receipt",
+      quantity: 100,
+      direction: "in",
+      reason: "Opening stock",
+      actorKind: "system",
+    });
+  }
+
+  if ((await prisma.inventorySupplier.count({ where: { tenantId } })) === 0) {
+    await prisma.inventorySupplier.create({
+      data: {
+        tenantId,
+        name: "Hospitality Supplies Co",
+        code: "HSC",
+        contactName: "Alex Supplier",
+        email: "orders@hsc.example",
+        status: "active",
+      },
+    });
+  }
+
+  if ((await prisma.inventoryReorderRule.count({ where: { tenantId } })) === 0 && item) {
+    await prisma.inventoryReorderRule.create({
+      data: {
+        tenantId,
+        itemId: item.id,
+        locationId: main.id,
+        reorderPoint: 20,
+        reorderQuantity: 50,
+        status: "active",
+      },
+    });
+  }
+
+  if ((await prisma.operationalAsset.count({ where: { tenantId } })) === 0) {
+    const cat = await prisma.assetCategory.create({
+      data: { tenantId, name: "Equipment", code: "EQUIP" },
+    });
+    await prisma.operationalAsset.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        locationId: main.id,
+        name: businessType === "restaurant" ? "Oven" : "Housekeeping Cart",
+        code: "ASSET-1",
+        status: "available",
+        metadata: {},
+      },
+    });
+  }
+
+  if ((await prisma.operationalTask.count({ where: { tenantId } })) === 0) {
+    await prisma.operationalTask.create({
+      data: {
+        tenantId,
+        title: "Restock main store",
+        description: "Weekly restock checklist",
+        priority: "medium",
+        status: "open",
+      },
     });
   }
 }

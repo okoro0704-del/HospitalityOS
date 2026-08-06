@@ -13,6 +13,13 @@ import { clearBookingEngine } from "./helpers/cleanup-booking.js";
 import { clearCommerceEngine } from "./helpers/cleanup-commerce.js";
 import { clearDiningModule } from "./helpers/cleanup-dining.js";
 import { clearFitnessModule } from "./helpers/cleanup-fitness.js";
+import { clearSpaModule } from "./helpers/cleanup-spa.js";
+import { clearEventsModule } from "./helpers/cleanup-events.js";
+import { clearCinemaModule } from "./helpers/cleanup-cinema.js";
+import { clearOperationsModule } from "./helpers/cleanup-operations.js";
+import { clearCrmModule } from "./helpers/cleanup-crm.js";
+import { clearNotificationsModule } from "./helpers/cleanup-notifications.js";
+import { clearBillingModule } from "./helpers/cleanup-billing.js";
 import type { FastifyInstance } from "fastify";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +49,11 @@ async function resetDb() {
   await prisma.stay.deleteMany();
   await prisma.guestNote.deleteMany();
   await prisma.accommodationReservation.deleteMany();
+  await clearCrmModule(prisma);
+  await clearOperationsModule(prisma);
+  await clearCinemaModule(prisma);
+  await clearEventsModule(prisma);
+  await clearSpaModule(prisma);
   await clearFitnessModule(prisma);
   await clearDiningModule(prisma);
   await clearCommerceEngine(prisma);
@@ -56,7 +68,8 @@ async function resetDb() {
   await prisma.amenity.deleteMany();
   await prisma.property.deleteMany();
   await prisma.auditLog.deleteMany();
-  await prisma.notification.deleteMany();
+  await clearBillingModule(prisma);
+  await clearNotificationsModule(prisma);
   await prisma.guestSession.deleteMany();
   await prisma.staffSession.deleteMany();
   await prisma.customer.deleteMany();

@@ -15,6 +15,18 @@ const CORE_NAV = [
   { to: "/", label: "Overview", end: true },
   { to: "/modules", label: "Modules" },
   { to: "/customers", label: "Customers" },
+  { to: "/customers/segments", label: "Segments" },
+  { to: "/customers/tags", label: "Tags" },
+  { to: "/customers/interactions", label: "Interactions" },
+  { to: "/customers/feedback", label: "Feedback" },
+  { to: "/customers/consent", label: "Consent" },
+  { to: "/customers/loyalty", label: "Loyalty" },
+  { to: "/notifications", label: "Notifications" },
+  { to: "/notifications/templates", label: "Templates" },
+  { to: "/notifications/rules", label: "Rules" },
+  { to: "/notifications/deliveries", label: "Deliveries" },
+  { to: "/billing", label: "Billing" },
+  { to: "/billing/invoices", label: "Invoices" },
   { to: "/staff", label: "Staff" },
 ];
 
@@ -81,11 +93,67 @@ const FITNESS_NAV = [
   { to: "/fitness/access-passes", label: "Access Passes" },
 ];
 
-const OTHER_OPS = [
-  { to: "/operations/events", label: "Events", module: "events" },
-  { to: "/operations/spa", label: "Spa", module: "spa_services" },
-  { to: "/settings", label: "Settings" },
+const SPA_NAV = [
+  { to: "/spa", label: "Spa Dashboard" },
+  { to: "/spa/appointments", label: "Appointments" },
+  { to: "/spa/calendar", label: "Spa Calendar" },
+  { to: "/spa/treatments", label: "Treatments" },
+  { to: "/spa/therapists", label: "Therapists" },
+  { to: "/spa/rooms", label: "Treatment Rooms" },
+  { to: "/spa/facilities", label: "Spa Facilities" },
+  { to: "/spa/clients", label: "Clients" },
+  { to: "/spa/consultations", label: "Consultations" },
+  { to: "/spa/notes", label: "Treatment Notes" },
+  { to: "/spa/wellness", label: "Wellness Facilities" },
+  { to: "/spa/packages", label: "Packages" },
+  { to: "/spa/memberships", label: "Spa Memberships" },
+  { to: "/spa/waitlist", label: "Spa Waitlist" },
 ];
+
+const EVENTS_NAV = [
+  { to: "/events", label: "Events Dashboard" },
+  { to: "/events/list", label: "Events" },
+  { to: "/events/venues", label: "Venues" },
+  { to: "/events/calendar", label: "Event Calendar" },
+  { to: "/events/tickets", label: "Tickets" },
+  { to: "/events/seating", label: "Seating" },
+  { to: "/events/attendees", label: "Attendees" },
+  { to: "/events/packages", label: "Event Packages" },
+  { to: "/events/rentals", label: "Venue Rentals" },
+  { to: "/events/waitlist", label: "Event Waitlists" },
+];
+
+const CINEMA_NAV = [
+  { to: "/cinema", label: "Cinema Dashboard" },
+  { to: "/cinema/venues", label: "Venues" },
+  { to: "/cinema/screens", label: "Screens" },
+  { to: "/cinema/seats", label: "Seat Maps" },
+  { to: "/cinema/content", label: "Content" },
+  { to: "/cinema/showtimes", label: "Showtimes" },
+  { to: "/cinema/tickets", label: "Tickets" },
+  { to: "/cinema/attendees", label: "Attendees" },
+  { to: "/cinema/check-in", label: "Check-in" },
+  { to: "/cinema/concessions", label: "Concessions" },
+  { to: "/cinema/orders", label: "Orders" },
+  { to: "/cinema/shifts", label: "Shifts" },
+];
+
+const OPS_NAV = [
+  { to: "/operations", label: "Operations Dashboard" },
+  { to: "/operations/inventory", label: "Inventory" },
+  { to: "/operations/locations", label: "Locations" },
+  { to: "/operations/stock", label: "Stock" },
+  { to: "/operations/transfers", label: "Transfers" },
+  { to: "/operations/counts", label: "Stock Counts" },
+  { to: "/operations/alerts", label: "Reorder Alerts" },
+  { to: "/operations/suppliers", label: "Suppliers" },
+  { to: "/operations/purchase-requests", label: "Purchase Requests" },
+  { to: "/operations/assets", label: "Assets" },
+  { to: "/operations/maintenance", label: "Maintenance" },
+  { to: "/operations/tasks", label: "Tasks" },
+];
+
+const OTHER_OPS = [{ to: "/settings", label: "Settings" }];
 
 export function StaffShell() {
   const session = getSession();
@@ -115,6 +183,26 @@ export function StaffShell() {
     }
     if (modules.includes("gym_membership") || modules.includes("fitness_classes")) {
       items.push(...FITNESS_NAV);
+    }
+    if (
+      modules.includes("spa_services") ||
+      modules.includes("beauty_appointments") ||
+      modules.includes("wellness_packages")
+    ) {
+      items.push(...SPA_NAV);
+    }
+    if (
+      modules.includes("events") ||
+      modules.includes("venue_booking") ||
+      (modules.includes("ticketing") && !modules.includes("cinema"))
+    ) {
+      items.push(...EVENTS_NAV);
+    }
+    if (modules.includes("cinema")) {
+      items.push(...CINEMA_NAV);
+    }
+    if (modules.includes("inventory")) {
+      items.push(...OPS_NAV);
     }
     for (const item of OTHER_OPS) {
       if (!("module" in item) || modules.includes(item.module!)) {

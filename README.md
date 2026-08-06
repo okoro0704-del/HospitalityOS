@@ -15,7 +15,7 @@ This sprint establishes the independent platform:
 - Staff Web shell + role-aware navigation
 - Automated tests and architecture documentation
 
-Sprint 1–5 established platform, accommodation, booking, commerce, and dining. Sprint 6 adds the **Gym, Fitness & Membership Module** on those engines.
+Sprint 1–12 established platform through communications. Sprint 13 adds the **Payments & Billing Foundation**.
 
 ## Monorepo layout
 
@@ -102,6 +102,17 @@ HospitalityOS never receives TrustID credentials.
 - [Fitness booking](docs/FITNESS_BOOKING.md)
 - [Attendance](docs/ATTENDANCE.md)
 - [Trainer workflow](docs/TRAINER_WORKFLOW.md)
+- [Spa & wellness module](docs/SPA_MODULE.md)
+- [Spa booking](docs/SPA_BOOKING.md)
+- [Treatment catalog](docs/TREATMENT_CATALOG.md)
+- [Therapist workflow](docs/THERAPIST_WORKFLOW.md)
+- [Client workflow](docs/CLIENT_WORKFLOW.md)
+- [Events & venues module](docs/EVENTS_MODULE.md)
+- [Venue model](docs/VENUE_MODEL.md)
+- [Ticketing](docs/TICKETING.md)
+- [Seating](docs/SEATING.md)
+- [Event check-in](docs/EVENT_CHECKIN.md)
+- [Event booking](docs/EVENT_BOOKING.md)
 - [Menu engine](docs/MENU_ENGINE.md)
 - [Order workflow](docs/ORDER_WORKFLOW.md)
 - [Kitchen display](docs/KITCHEN_DISPLAY.md)

@@ -2,7 +2,22 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "./pages/Login";
 import { DashboardPage } from "./pages/Dashboard";
 import { ModulesPage } from "./pages/Modules";
-import { CustomersPage } from "./pages/Customers";
+import { CustomersPage, CustomerDetailPage, CustomerSegmentsPage, CustomerTagsPage, CustomerInteractionsPage, CustomerFeedbackPage, CustomerConsentPage, CustomerLoyaltyPage } from "./pages/Customers";
+import {
+  StaffNotificationsPage,
+  NotificationTemplatesPage,
+  NotificationRulesPage,
+  NotificationDeliveriesPage,
+  NotificationPreferencesPage,
+} from "./pages/Notifications";
+import {
+  BillingDashboardPage,
+  BillingInvoicesPage,
+  BillingPaymentsPage,
+  BillingRefundsPage,
+  BillingSettlementsPage,
+  BillingTaxesPage,
+} from "./pages/Billing";
 import { StaffPage } from "./pages/Staff";
 import { SettingsPage } from "./pages/Settings";
 import { OperationsPage } from "./pages/Operations";
@@ -53,6 +68,54 @@ import {
   FitnessCheckInsPage,
   FitnessAccessPassesPage,
 } from "./pages/fitness/Ops";
+import { SpaDashboardPage, SpaFacilitiesPage } from "./pages/spa/Dashboard";
+import {
+  SpaTreatmentsPage,
+  SpaTherapistsPage,
+  SpaAppointmentsPage,
+  SpaCalendarPage,
+  SpaClientsPage,
+  SpaConsultationsPage,
+  SpaNotesPage,
+  SpaWellnessPage,
+  SpaPackagesPage,
+  SpaMembershipsPage,
+  SpaWaitlistPage,
+  SpaRoomsPage,
+} from "./pages/spa/Ops";
+import { EventsDashboardPage, EventsVenuesPage } from "./pages/events/Dashboard";
+import {
+  EventsListPage,
+  EventsTicketsPage,
+  EventsCalendarPage,
+  EventsAttendeesPage,
+  EventsSeatingPage,
+  EventsPackagesPage,
+  EventsWaitlistPage,
+  EventsRentalsPage,
+} from "./pages/events/Ops";
+import { CinemaDashboardPage, CinemaVenuesPage } from "./pages/cinema/Dashboard";
+import {
+  CinemaContentPage,
+  CinemaShowtimesPage,
+  CinemaSeatsPage,
+  CinemaTicketsPage,
+  CinemaAttendeesPage,
+  CinemaConcessionsPage,
+  CinemaShiftsPage,
+} from "./pages/cinema/Ops";
+import { OpsDashboardPage, OpsLocationsPage, OpsInventoryPage } from "./pages/operations/Dashboard";
+import {
+  OpsStockPage,
+  OpsTransfersPage,
+  OpsCountsPage,
+  OpsAlertsPage,
+  OpsSuppliersPage,
+  OpsPurchaseRequestsPage,
+  OpsAssetsPage,
+  OpsMaintenancePage,
+  OpsTasksPage,
+} from "./pages/operations/Ops";
 import { StaffShell } from "./components/StaffShell";
 import { RequireStaff } from "./components/RequireStaff";
 
@@ -70,6 +133,24 @@ export function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/modules" element={<ModulesPage />} />
         <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/customers/segments" element={<CustomerSegmentsPage />} />
+        <Route path="/customers/tags" element={<CustomerTagsPage />} />
+        <Route path="/customers/interactions" element={<CustomerInteractionsPage />} />
+        <Route path="/customers/feedback" element={<CustomerFeedbackPage />} />
+        <Route path="/customers/consent" element={<CustomerConsentPage />} />
+        <Route path="/customers/loyalty" element={<CustomerLoyaltyPage />} />
+        <Route path="/customers/:id" element={<CustomerDetailPage />} />
+        <Route path="/notifications" element={<StaffNotificationsPage />} />
+        <Route path="/notifications/templates" element={<NotificationTemplatesPage />} />
+        <Route path="/notifications/rules" element={<NotificationRulesPage />} />
+        <Route path="/notifications/deliveries" element={<NotificationDeliveriesPage />} />
+        <Route path="/notifications/preferences" element={<NotificationPreferencesPage />} />
+        <Route path="/billing" element={<BillingDashboardPage />} />
+        <Route path="/billing/invoices" element={<BillingInvoicesPage />} />
+        <Route path="/billing/payments" element={<BillingPaymentsPage />} />
+        <Route path="/billing/refunds" element={<BillingRefundsPage />} />
+        <Route path="/billing/settlements" element={<BillingSettlementsPage />} />
+        <Route path="/billing/taxes" element={<BillingTaxesPage />} />
         <Route path="/staff" element={<StaffPage />} />
         <Route path="/commerce" element={<CatalogHomePage />} />
         <Route path="/commerce/categories" element={<CategoriesPage />} />
@@ -103,6 +184,54 @@ export function App() {
         <Route path="/fitness/attendance" element={<FitnessAttendancePage />} />
         <Route path="/fitness/check-ins" element={<FitnessCheckInsPage />} />
         <Route path="/fitness/access-passes" element={<FitnessAccessPassesPage />} />
+        <Route path="/spa" element={<SpaDashboardPage />} />
+        <Route path="/spa/facilities" element={<SpaFacilitiesPage />} />
+        <Route path="/spa/rooms" element={<SpaRoomsPage />} />
+        <Route path="/spa/appointments" element={<SpaAppointmentsPage />} />
+        <Route path="/spa/calendar" element={<SpaCalendarPage />} />
+        <Route path="/spa/treatments" element={<SpaTreatmentsPage />} />
+        <Route path="/spa/therapists" element={<SpaTherapistsPage />} />
+        <Route path="/spa/clients" element={<SpaClientsPage />} />
+        <Route path="/spa/consultations" element={<SpaConsultationsPage />} />
+        <Route path="/spa/notes" element={<SpaNotesPage />} />
+        <Route path="/spa/wellness" element={<SpaWellnessPage />} />
+        <Route path="/spa/packages" element={<SpaPackagesPage />} />
+        <Route path="/spa/memberships" element={<SpaMembershipsPage />} />
+        <Route path="/spa/waitlist" element={<SpaWaitlistPage />} />
+        <Route path="/events" element={<EventsDashboardPage />} />
+        <Route path="/events/list" element={<EventsListPage />} />
+        <Route path="/events/venues" element={<EventsVenuesPage />} />
+        <Route path="/events/calendar" element={<EventsCalendarPage />} />
+        <Route path="/events/tickets" element={<EventsTicketsPage />} />
+        <Route path="/events/seating" element={<EventsSeatingPage />} />
+        <Route path="/events/attendees" element={<EventsAttendeesPage />} />
+        <Route path="/events/packages" element={<EventsPackagesPage />} />
+        <Route path="/events/rentals" element={<EventsRentalsPage />} />
+        <Route path="/events/waitlist" element={<EventsWaitlistPage />} />
+        <Route path="/cinema" element={<CinemaDashboardPage />} />
+        <Route path="/cinema/venues" element={<CinemaVenuesPage />} />
+        <Route path="/cinema/screens" element={<CinemaVenuesPage />} />
+        <Route path="/cinema/seats" element={<CinemaSeatsPage />} />
+        <Route path="/cinema/content" element={<CinemaContentPage />} />
+        <Route path="/cinema/showtimes" element={<CinemaShowtimesPage />} />
+        <Route path="/cinema/tickets" element={<CinemaTicketsPage />} />
+        <Route path="/cinema/attendees" element={<CinemaAttendeesPage />} />
+        <Route path="/cinema/check-in" element={<CinemaAttendeesPage />} />
+        <Route path="/cinema/concessions" element={<CinemaConcessionsPage />} />
+        <Route path="/cinema/orders" element={<CinemaConcessionsPage />} />
+        <Route path="/cinema/shifts" element={<CinemaShiftsPage />} />
+        <Route path="/operations" element={<OpsDashboardPage />} />
+        <Route path="/operations/inventory" element={<OpsInventoryPage />} />
+        <Route path="/operations/locations" element={<OpsLocationsPage />} />
+        <Route path="/operations/stock" element={<OpsStockPage />} />
+        <Route path="/operations/transfers" element={<OpsTransfersPage />} />
+        <Route path="/operations/counts" element={<OpsCountsPage />} />
+        <Route path="/operations/alerts" element={<OpsAlertsPage />} />
+        <Route path="/operations/suppliers" element={<OpsSuppliersPage />} />
+        <Route path="/operations/purchase-requests" element={<OpsPurchaseRequestsPage />} />
+        <Route path="/operations/assets" element={<OpsAssetsPage />} />
+        <Route path="/operations/maintenance" element={<OpsMaintenancePage />} />
+        <Route path="/operations/tasks" element={<OpsTasksPage />} />
         <Route path="/booking/resources" element={<BookingResourcesPage />} />
         <Route path="/booking/bookings" element={<BookingBookingsPage />} />
         <Route path="/booking/schedules" element={<BookingSchedulesPage />} />

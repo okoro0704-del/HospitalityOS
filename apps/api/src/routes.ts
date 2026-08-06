@@ -30,6 +30,13 @@ import { registerBookingRoutes } from "./routes-booking.js";
 import { registerCommerceRoutes } from "./routes-commerce.js";
 import { registerRestaurantRoutes } from "./routes-restaurant.js";
 import { registerFitnessRoutes } from "./routes-fitness.js";
+import { registerSpaRoutes } from "./routes-spa.js";
+import { registerEventsRoutes } from "./routes-events.js";
+import { registerCinemaRoutes } from "./routes-cinema.js";
+import { registerOperationsRoutes } from "./routes-operations.js";
+import { registerCrmRoutes } from "./routes-crm.js";
+import { registerNotificationRoutes } from "./routes-notifications.js";
+import { registerBillingRoutes } from "./routes-billing.js";
 
 const cookieOpts = {
   path: "/",
@@ -51,6 +58,13 @@ export async function registerRoutes(app: FastifyInstance) {
   await registerCommerceRoutes(app);
   await registerRestaurantRoutes(app);
   await registerFitnessRoutes(app);
+  await registerSpaRoutes(app);
+  await registerEventsRoutes(app);
+  await registerCinemaRoutes(app);
+  await registerOperationsRoutes(app);
+  await registerCrmRoutes(app);
+  await registerNotificationRoutes(app);
+  await registerBillingRoutes(app);
 
   // ── Module catalog (platform-wide) ───────────────────────────
   app.get("/modules/catalog", async () => ({
@@ -326,49 +340,6 @@ export async function registerRoutes(app: FastifyInstance) {
     };
   });
 
-  // ── Customers (staff) ────────────────────────────────────────
-  app.get("/customers", { preHandler: requireStaff }, async (req) => {
-    const customers = await prisma.customer.findMany({
-      where: { tenantId: req.tenantId! },
-      orderBy: { createdAt: "desc" },
-    });
-    return { customers: customers.map(toCustomerPublic) };
-  });
-
-  app.get("/customers/:id", { preHandler: requireStaff }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const customer = await prisma.customer.findUnique({ where: { id } });
-    if (!customer || !assertSameTenant(customer.tenantId, req.tenantId!)) {
-      return tenantNotFound(reply);
-    }
-    return { customer: toCustomerPublic(customer) };
-  });
-
-  app.post("/customers", {
-    preHandler: await requireStaffRoles(["owner", "admin", "manager", "front_desk"]),
-  }, async (req) => {
-    const body = z
-      .object({
-        displayName: z.string().min(1),
-        email: z.string().email().optional(),
-        phone: z.string().optional(),
-      })
-      .parse(req.body);
-
-    const customer = await prisma.customer.create({
-      data: {
-        tenantId: req.tenantId!,
-        displayName: body.displayName,
-        email: body.email,
-        phone: body.phone,
-        preferences: {},
-        loyaltyPlaceholder: {},
-        metadata: {},
-      },
-    });
-    return { customer: toCustomerPublic(customer) };
-  });
-
   // ── Staff management ─────────────────────────────────────────
   app.get("/staff", {
     preHandler: await requireStaffRoles(["owner", "admin", "manager"]),
@@ -389,49 +360,6 @@ export async function registerRoutes(app: FastifyInstance) {
       return tenantNotFound(reply);
     }
     return { staff: toStaffPublic(member) };
-  });
-
-  // ── Notifications (shell) ────────────────────────────────────
-  app.get("/notifications", { preHandler: requireStaff }, async (req) => {
-    const items = await prisma.notification.findMany({
-      where: { tenantId: req.tenantId! },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    });
-    return {
-      notifications: items.map((n) => ({
-        id: n.id,
-        title: n.title,
-        body: n.body,
-        channel: n.channel,
-        readAt: n.readAt?.toISOString() ?? null,
-        createdAt: n.createdAt.toISOString(),
-      })),
-    };
-  });
-
-  app.get("/guest/notifications", { preHandler: requireGuest }, async (req) => {
-    const auth = req.auth!;
-    const items = await prisma.notification.findMany({
-      where: {
-        tenantId: req.tenantId!,
-        OR: [
-          { actorKind: "guest", actorId: (auth as { customerId: string }).customerId },
-          { actorKind: "broadcast" },
-        ],
-      },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-    });
-    return {
-      notifications: items.map((n) => ({
-        id: n.id,
-        title: n.title,
-        body: n.body,
-        readAt: n.readAt?.toISOString() ?? null,
-        createdAt: n.createdAt.toISOString(),
-      })),
-    };
   });
 
   // ── Audit logs ───────────────────────────────────────────────

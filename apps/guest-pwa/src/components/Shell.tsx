@@ -22,8 +22,13 @@ export function Shell() {
         <NavLink to="/catalog">Catalog</NavLink>
         <NavLink to="/dining">Dining</NavLink>
         <NavLink to="/fitness">Fitness</NavLink>
+        <NavLink to="/spa">Spa</NavLink>
+        <NavLink to="/events">Events</NavLink>
+        <NavLink to="/cinema">Cinema</NavLink>
         <NavLink to="/stay">Stay</NavLink>
         <NavLink to="/my-bookings">Bookings</NavLink>
+        <NavLink to="/notifications">Alerts</NavLink>
+        <NavLink to="/payments">Payments</NavLink>
         <NavLink to="/profile">Profile</NavLink>
       </nav>
     </div>

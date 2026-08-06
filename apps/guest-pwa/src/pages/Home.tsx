@@ -42,15 +42,30 @@ export function HomePage() {
         ) : (
           modules.map((m) => {
             const href =
-              m.guestNavKey === "fitness" || m.id === "gym_membership" || m.id === "fitness_classes"
-                ? "/fitness"
-                : m.guestNavKey === "dining" || m.id === "restaurant"
-                  ? "/dining"
-                  : m.guestNavKey === "stay" || m.id === "accommodation"
-                    ? "/stay"
-                    : m.guestNavKey === "bookings"
-                      ? "/book"
-                      : null;
+              m.guestNavKey === "cinema" || m.id === "cinema"
+                ? "/cinema"
+                : m.guestNavKey === "events" ||
+                    m.guestNavKey === "venues" ||
+                    m.id === "events" ||
+                    m.id === "venue_booking" ||
+                    (m.id === "ticketing" && m.guestNavKey !== "cinema")
+                  ? "/events"
+                  : m.guestNavKey === "tickets"
+                    ? "/events"
+                    : m.guestNavKey === "spa" ||
+                        m.id === "spa_services" ||
+                        m.id === "beauty_appointments" ||
+                        m.id === "wellness_packages"
+                      ? "/spa"
+                      : m.guestNavKey === "fitness" || m.id === "gym_membership" || m.id === "fitness_classes"
+                        ? "/fitness"
+                        : m.guestNavKey === "dining" || m.id === "restaurant"
+                          ? "/dining"
+                          : m.guestNavKey === "stay" || m.id === "accommodation"
+                            ? "/stay"
+                            : m.guestNavKey === "bookings"
+                              ? "/book"
+                              : null;
             return (
               <article key={m.id} className="module-tile">
                 <h3>{m.name}</h3>
