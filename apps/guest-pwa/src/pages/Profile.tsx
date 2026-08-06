@@ -143,7 +143,7 @@ export function ProfilePage() {
         <button type="button" className="btn" onClick={onLogout}>
           Sign out of HospitalityOS
         </button>
-        <button type="button" className="btn ghost" onClick={() => navigate("/")}>
+        <button type="button" className="btn ghost" onClick={() => navigate("/home")}>
           Back home
         </button>
       </div>

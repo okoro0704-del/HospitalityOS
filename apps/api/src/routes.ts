@@ -19,7 +19,7 @@ import {
   toStaffSessionPublic,
   toTenantPublic,
 } from "./lib/mappers.js";
-import { createGuestSessionFromHandoff, revokeGuestSession } from "./services/guest-auth.js";
+import { createGuestSessionFromHandoff, revokeGuestSession, createDemoGuestSession } from "./services/guest-auth.js";
 import { staffLogin, revokeStaffSession } from "./services/staff-auth.js";
 import { getModuleCatalog, getTenantModules, setTenantModule } from "./services/modules.js";
 import { writeAudit } from "./lib/audit.js";
@@ -115,6 +115,37 @@ export async function registerRoutes(app: FastifyInstance) {
       const e = err as Error & { code?: string; statusCode?: number };
       return reply.code(e.statusCode ?? 401).send({
         error: e.code ?? "invalid_token",
+        message: e.message,
+      });
+    }
+  });
+
+  /** Demo venue entry — HospitalityOS-local session (no TrustID / LifeOS). */
+  app.post("/auth/guest/demo", async (req, reply) => {
+    const body = z
+      .object({
+        tenantSlug: z.string().min(1),
+        displayName: z.string().min(1).optional(),
+      })
+      .parse(req.body);
+
+    try {
+      const result = await createDemoGuestSession(body);
+      reply.setCookie(GUEST_COOKIE, result.token, {
+        ...cookieOpts,
+        expires: new Date(result.session.expiresAt),
+      });
+      return {
+        token: result.token,
+        session: result.session,
+        customer: result.customer,
+        tenantId: result.tenantId,
+        tenantSlug: result.tenantSlug,
+      };
+    } catch (err) {
+      const e = err as Error & { code?: string; statusCode?: number };
+      return reply.code(e.statusCode ?? 400).send({
+        error: e.code ?? "demo_failed",
         message: e.message,
       });
     }

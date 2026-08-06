@@ -15,7 +15,7 @@ export function LifeOsAuthPage() {
   useEffect(() => {
     const handoff = params.get("handoff");
     const experienceId = params.get("experience_id") ?? "";
-    const returnPath = params.get("return_path") || "/";
+    const returnPath = params.get("return_path") || "/home";
 
     if (rejectQueryAuth() && !handoff) {
       setError("Query-parameter authentication is not allowed.");

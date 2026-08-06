@@ -5,6 +5,7 @@ import { ExplorePage } from "./pages/Explore";
 import { BookingsPage } from "./pages/Bookings";
 import { ProfilePage } from "./pages/Profile";
 import { TenantSelectPage } from "./pages/TenantSelect";
+import { LandingPage } from "./pages/Landing";
 import { StayBrowsePage } from "./pages/StayBrowse";
 import { RoomTypeDetailPage } from "./pages/RoomTypeDetail";
 import { BookEnginePage } from "./pages/BookEngine";
@@ -56,6 +57,7 @@ import { RequireGuest } from "./components/RequireGuest";
 export function App() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
       <Route path="/auth/lifeos" element={<LifeOsAuthPage />} />
       <Route path="/start" element={<TenantSelectPage />} />
       <Route
@@ -65,7 +67,7 @@ export function App() {
           </RequireGuest>
         }
       >
-        <Route path="/" element={<HomePage />} />
+        <Route path="/home" element={<HomePage />} />
         <Route path="/explore" element={<ExplorePage />} />
         <Route path="/catalog" element={<CatalogBrowsePage />} />
         <Route path="/catalog/:id" element={<CatalogDetailPage />} />

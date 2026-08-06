@@ -427,6 +427,39 @@ test("authentication handoff rejects revoked LifeOS session", async () => {
   assert.equal(res.json().error, "revoked");
 });
 
+test("demo guest entry creates local session without LifeOS", async () => {
+  const res = await app.inject({
+    method: "POST",
+    url: "/auth/guest/demo",
+    payload: { tenantSlug: "sunrise-hotel", displayName: "Demo Walker" },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const body = res.json() as {
+    token: string;
+    session: { displayName: string };
+    tenantSlug: string;
+  };
+  assert.equal(body.tenantSlug, "sunrise-hotel");
+  assert.equal(body.session.displayName, "Demo Walker");
+  assert.ok(body.token.startsWith("hos_"));
+
+  const me = await app.inject({
+    method: "GET",
+    url: "/auth/guest/me",
+    headers: { authorization: `Bearer ${body.token}` },
+  });
+  assert.equal(me.statusCode, 200);
+  assert.equal(me.json().customer.displayName, "Demo Walker");
+
+  const modules = await app.inject({
+    method: "GET",
+    url: "/guest/modules",
+    headers: { authorization: `Bearer ${body.token}` },
+  });
+  assert.equal(modules.statusCode, 200);
+  assert.ok(Array.isArray(modules.json().modules));
+});
+
 test("public tenant branding endpoint returns configuration model", async () => {
   const res = await app.inject({ method: "GET", url: "/tenants/sunrise-hotel/public" });
   assert.equal(res.statusCode, 200);

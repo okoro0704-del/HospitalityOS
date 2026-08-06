@@ -145,6 +145,94 @@ export async function createGuestSessionFromHandoff(opts: {
   };
 }
 
+/**
+ * Demo / local guest entry — does NOT use TrustID or LifeOS.
+ * Creates a HospitalityOS-only guest session for a tenant slug.
+ */
+export async function createDemoGuestSession(opts: {
+  tenantSlug: string;
+  displayName?: string;
+}) {
+  if (!config.allowDemoGuest) {
+    throw Object.assign(new Error("Demo guest entry is disabled"), {
+      code: "demo_disabled",
+      statusCode: 403,
+    });
+  }
+
+  const tenant = await prisma.tenant.findFirst({
+    where: { slug: opts.tenantSlug, status: "active" },
+  });
+  if (!tenant) {
+    throw Object.assign(new Error("Venue not found"), {
+      code: "tenant_not_found",
+      statusCode: 404,
+    });
+  }
+
+  const displayName = opts.displayName?.trim() || "Demo Guest";
+  const demoUserId = `demo_${tenant.slug}`;
+
+  const customer = await prisma.customer.upsert({
+    where: {
+      tenantId_lifeosUserId: {
+        tenantId: tenant.id,
+        lifeosUserId: demoUserId,
+      },
+    },
+    create: {
+      tenantId: tenant.id,
+      displayName,
+      lifeosUserId: demoUserId,
+      status: "active",
+      preferences: {},
+      loyaltyPlaceholder: {},
+      metadata: { demo: true },
+    },
+    update: {
+      displayName,
+      status: "active",
+    },
+  });
+
+  const rawToken = generateSessionToken();
+  const expiresAt = new Date(Date.now() + config.guestSessionTtlHours * 60 * 60 * 1000);
+  const jti = `demo_jti_${Date.now()}`;
+  const sid = `demo_sid_${tenant.slug}`;
+
+  const session = await prisma.guestSession.create({
+    data: {
+      tenantId: tenant.id,
+      customerId: customer.id,
+      tokenHash: hashToken(rawToken),
+      experienceId: tenant.experienceId ?? `exp_demo_${tenant.slug}`,
+      lifeosJti: jti,
+      lifeosSid: sid,
+      scopes: ["profile.basic", "notifications", "demo"],
+      displayName,
+      expiresAt,
+    },
+  });
+
+  await writeAudit({
+    tenantId: tenant.id,
+    actorKind: "guest",
+    actorId: customer.id,
+    action: "auth.guest.demo_session_created",
+    resource: "guest_session",
+    resourceId: session.id,
+    metadata: { demo: true, tenantSlug: tenant.slug },
+  });
+
+  return {
+    token: rawToken,
+    session: toGuestSessionPublic(session),
+    customer: toCustomerPublic(customer),
+    tenantId: tenant.id,
+    tenantSlug: tenant.slug,
+  };
+}
+
 export async function revokeGuestSession(sessionId: string, tenantId: string) {
   const session = await prisma.guestSession.findFirst({
     where: { id: sessionId, tenantId },

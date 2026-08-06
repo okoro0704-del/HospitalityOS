@@ -352,3 +352,81 @@ code {
     transform: translateY(0);
   }
 }
+
+.landing {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 3rem;
+  animation: rise 480ms ease both;
+}
+
+.landing-hero h1 {
+  margin: 0.4rem 0 0.75rem;
+  font-size: clamp(1.9rem, 5vw, 2.6rem);
+  line-height: 1.15;
+}
+
+.landing-hero .lede {
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.55;
+  max-width: 36rem;
+}
+
+.landing-hero .actions {
+  margin: 1.5rem 0 1rem;
+}
+
+.landing-hero .btn {
+  text-decoration: none;
+  display: inline-block;
+}
+
+.landing-grid {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 2.5rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.landing-grid article {
+  padding: 1rem 1.05rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.landing-grid h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+}
+
+.landing-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.error-panel {
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(185, 28, 28, 0.25);
+  background: rgba(185, 28, 28, 0.06);
+}
+
+.error-panel .error {
+  margin: 0 0 0.5rem;
+}
+
+.tenant-list .btn {
+  margin-top: 0.65rem;
+  justify-self: start;
+}
+
+@media (max-width: 520px) {
+  .landing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

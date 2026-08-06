@@ -1,4 +1,18 @@
-const API = import.meta.env.VITE_HOS_API_URL ?? "http://localhost:8800";
+/** Resolve API base URL for browser builds. */
+export function getApiBaseUrl(): string {
+  const configured = import.meta.env.VITE_HOS_API_URL?.trim();
+  if (configured) return configured.replace(/\/$/, "");
+  return "http://localhost:8800";
+}
+
+/** True when a production host is using the localhost API fallback (misconfigured deploy). */
+export function isApiMisconfigured(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") return false;
+  return !import.meta.env.VITE_HOS_API_URL?.trim();
+}
+
 const SESSION_KEY = "hos.guest.session";
 
 export type GuestSessionState = {
@@ -13,8 +27,12 @@ export type GuestSessionState = {
   expiresAt: string;
 };
 
+function apiUrl() {
+  return getApiBaseUrl();
+}
+
 export async function exchangeHandoff(handoff: string, experienceId: string) {
-  const res = await fetch(`${API}/auth/guest/exchange`, {
+  const res = await fetch(`${apiUrl()}/auth/guest/exchange`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -43,6 +61,47 @@ export async function exchangeHandoff(handoff: string, experienceId: string) {
   };
 }
 
+/** Enter a demo venue without LifeOS (HospitalityOS-local session). */
+export async function enterDemoVenue(tenantSlug: string, displayName = "Demo Guest") {
+  const res = await fetch(`${apiUrl()}/auth/guest/demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ tenantSlug, displayName }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.message || `Could not enter venue (${res.status})`);
+  }
+  const result = data as {
+    token: string;
+    session: {
+      sessionId: string;
+      tenantId: string;
+      customerId: string;
+      displayName: string;
+      experienceId: string;
+      scopes: string[];
+      expiresAt: string;
+    };
+    customer: { id: string; displayName: string };
+    tenantId: string;
+    tenantSlug: string;
+  };
+  saveSession({
+    token: result.token,
+    sessionId: result.session.sessionId,
+    tenantId: result.tenantId,
+    tenantSlug: result.tenantSlug,
+    customerId: result.customer.id,
+    displayName: result.session.displayName,
+    experienceId: result.session.experienceId,
+    scopes: result.session.scopes,
+    expiresAt: result.session.expiresAt,
+  });
+  return result;
+}
+
 export function saveSession(state: GuestSessionState) {
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
 }
@@ -69,7 +128,7 @@ export function clearSession() {
 export async function logout() {
   const session = getSession();
   try {
-    await fetch(`${API}/auth/guest/logout`, {
+    await fetch(`${apiUrl()}/auth/guest/logout`, {
       method: "POST",
       credentials: "include",
       headers: session ? { Authorization: `Bearer ${session.token}` } : {},
@@ -81,7 +140,7 @@ export async function logout() {
 
 export async function apiGet<T>(path: string): Promise<T> {
   const session = getSession();
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${apiUrl()}${path}`, {
     credentials: "include",
     headers: session ? { Authorization: `Bearer ${session.token}` } : {},
   });
@@ -94,7 +153,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 
 export async function apiSend<T>(path: string, method: string, body?: unknown): Promise<T> {
   const session = getSession();
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${apiUrl()}${path}`, {
     method,
     credentials: "include",
     headers: {

@@ -13,5 +13,7 @@ export const config = {
   lifeosIssuer: process.env.LIFEOS_EXPECTED_ISSUER ?? "lifeos",
   guestSessionTtlHours: 12,
   staffSessionTtlHours: 12,
+  /** Demo guest entry without LifeOS — for local/dev and staged demos only. */
+  allowDemoGuest: (process.env.ALLOW_DEMO_GUEST ?? "true").toLowerCase() !== "false",
   version: "1.0.0",
 };

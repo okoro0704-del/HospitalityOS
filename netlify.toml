@@ -5,6 +5,9 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Required for a working guest app: set in Netlify UI to your live API origin, e.g.
+  # VITE_HOS_API_URL = https://your-api.example.com
+  # Also set that API's CORS_ORIGINS to include this Netlify site URL, and ALLOW_DEMO_GUEST=true.
 
 [[redirects]]
   from = "/*"

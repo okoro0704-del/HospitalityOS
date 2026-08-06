@@ -16,7 +16,7 @@ export function Shell() {
         <Outlet />
       </main>
       <nav className="guest-nav" aria-label="Guest navigation">
-        <NavLink to="/" end>
+        <NavLink to="/home" end>
           Home
         </NavLink>
         <NavLink to="/catalog">Catalog</NavLink>
