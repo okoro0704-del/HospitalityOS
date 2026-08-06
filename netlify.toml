@@ -1,0 +1,12 @@
+# Guest PWA — Netlify site settings can mirror this if UI overrides are cleared.
+[build]
+  command = "npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/guest-pwa"
+  publish = "apps/guest-pwa/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

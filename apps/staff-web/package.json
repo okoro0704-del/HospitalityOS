@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5181",
-    "build": "tsc -b && vite build",
+    "build": "npm run build -w @hospitalityos/shared && tsc -b && vite build",
     "preview": "vite preview --port 5181",
     "typecheck": "tsc -b --noEmit"
   },
