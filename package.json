@@ -13,6 +13,8 @@
     "dev:guest": "npm run dev -w @hospitalityos/guest-pwa",
     "dev:staff": "npm run dev -w @hospitalityos/staff-web",
     "build": "npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/api && npm run build -w @hospitalityos/guest-pwa && npm run build -w @hospitalityos/staff-web",
+    "build:api": "npm run build -w @hospitalityos/shared && npm run db:generate && npm run build -w @hospitalityos/api",
+    "start:api": "npm run db:push -w @hospitalityos/api && npm run start -w @hospitalityos/api",
     "setup": "npm install && npm run build -w @hospitalityos/shared && npm run db:generate && npm run db:push:dev && npm run db:seed",
     "db:generate": "npm run db:generate -w @hospitalityos/api",
     "db:push": "npm run db:push -w @hospitalityos/api",
