@@ -59,6 +59,7 @@ model Tenant {
   coupons            Coupon[]
   taxRules           TaxRule[]
   mediaAssets        MediaAsset[]
+  businessPublications BusinessPublication[]
   catalogTags        CatalogTag[]
   diningAreas        DiningArea[]
   diningMenus        DiningMenu[]
@@ -1141,21 +1142,51 @@ model Modifier {
 }
 
 model MediaAsset {
-  id         String   @id @default(cuid())
-  tenantId   String
-  offeringId String?
-  url        String
-  kind       String   @default("image")
-  altText    String?
-  sortOrder  Int      @default(0)
-  isCover    Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id          String    @id @default(cuid())
+  tenantId    String
+  offeringId  String?
+  url         String
+  kind        String    @default("image")
+  altText     String?
+  sortOrder   Int       @default(0)
+  isCover     Boolean   @default(false)
+  /// When false, public LifeOS media proxy will not stream bytes.
+  isPublic    Boolean   @default(true)
+  storageKey  String?
+  contentType String?
+  byteSize    Int?
+  checksum    String?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   offering Offering? @relation(fields: [offeringId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([offeringId])
+  @@index([tenantId, isPublic])
+}
+
+/// Business photo/video/post for LifeOS discovery. Media bytes stay in Drive / MediaAsset.
+model BusinessPublication {
+  id                String    @id @default(cuid())
+  tenantId          String
+  type              String
+  title             String    @default("")
+  caption           String    @default("")
+  status            String    @default("draft")
+  audience          String    @default("public")
+  relatedOfferingId String?
+  mediaAssetIds     Json
+  publishedAt       DateTime?
+  scheduledAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, publishedAt])
+  @@index([status, publishedAt])
 }
 
 model PriceList {
