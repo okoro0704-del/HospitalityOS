@@ -233,6 +233,172 @@ export async function createDemoGuestSession(opts: {
   };
 }
 
+/**
+ * Guest / customer authentication via TrustID assertion.
+ * Creates or links a tenant-scoped Customer with externalIdentityRef = TID-…
+ * Does NOT create a shared customer DB — each tenant owns its profile.
+ */
+export async function createGuestSessionFromTrustId(opts: {
+  assertion: string;
+  tenantSlug: string;
+  jwksUrl?: string;
+  trustidApiUrl?: string;
+}) {
+  const { verifyTrustIdAssertion, markAssertionConsumed, introspectTrustIdSession, consumeTrustIdAssertion } =
+    await import("../lib/trustid.js");
+
+  const verified = await verifyTrustIdAssertion({
+    assertion: opts.assertion,
+    expectedAudience: config.trustidAudience,
+    jwksUrl: opts.jwksUrl,
+    expectedAssertionType: "authentication",
+    requiredScopes: ["openid"],
+  });
+  if (!verified.ok) {
+    throw Object.assign(new Error(verified.message), {
+      code: verified.code,
+      statusCode: 401,
+    });
+  }
+
+  const intro = await introspectTrustIdSession(verified.claims.jti, opts.trustidApiUrl);
+  if (!intro.active) {
+    throw Object.assign(new Error("TrustID session is no longer valid"), {
+      code: intro.reason === "revoked" ? "revoked" : "token_expired",
+      statusCode: 401,
+    });
+  }
+
+  const consumed = await consumeTrustIdAssertion(verified.claims.jti, opts.trustidApiUrl);
+  if (!consumed.ok && consumed.code === "replay") {
+    throw Object.assign(new Error("Assertion has already been used"), {
+      code: "replay",
+      statusCode: 401,
+    });
+  }
+
+  markAssertionConsumed(verified.claims.jti, verified.claims.exp);
+
+  await prisma.assertionExchange.create({
+    data: {
+      jti: verified.claims.jti,
+      trustId: verified.claims.sub,
+      purpose: "guest_login",
+      tenantId: null,
+      expiresAt: new Date(verified.claims.exp * 1000 + 300_000),
+    },
+  }).catch(async (err) => {
+    if ((err as { code?: string }).code === "P2002") {
+      throw Object.assign(new Error("Assertion has already been used"), {
+        code: "replay",
+        statusCode: 401,
+      });
+    }
+    throw err;
+  });
+
+  const tenant = await prisma.tenant.findFirst({
+    where: { slug: opts.tenantSlug, status: "active" },
+  });
+  if (!tenant) {
+    throw Object.assign(new Error("Tenant not found"), {
+      code: "tenant_not_found",
+      statusCode: 404,
+    });
+  }
+
+  // Re-bind exchange to tenant (privacy: lookup always tenant-scoped)
+  await prisma.assertionExchange.update({
+    where: { jti: verified.claims.jti },
+    data: { tenantId: tenant.id },
+  }).catch(() => undefined);
+
+  const tid = verified.claims.sub;
+  const displayName = verified.claims.display_name ?? "Guest";
+
+  // Tenant-scoped only — never enumerate other tenants' customer links
+  let customer = await prisma.customer.findFirst({
+    where: {
+      tenantId: tenant.id,
+      OR: [{ trustId: tid }, { externalIdentityRef: tid }],
+    },
+  });
+
+  if (!customer) {
+    customer = await prisma.customer.create({
+      data: {
+        tenantId: tenant.id,
+        displayName,
+        trustId: tid,
+        externalIdentityRef: tid,
+        status: "active",
+        preferences: {},
+        loyaltyPlaceholder: {},
+        metadata: { authProvider: "trustid" },
+      },
+    });
+  } else {
+    customer = await prisma.customer.update({
+      where: { id: customer.id },
+      data: {
+        displayName,
+        trustId: tid,
+        externalIdentityRef: tid,
+        status: "active",
+      },
+    });
+  }
+
+  const rawToken = generateSessionToken();
+  const finalExpiry = new Date(Date.now() + config.guestSessionTtlHours * 60 * 60 * 1000);
+
+  const session = await prisma.guestSession.create({
+    data: {
+      tenantId: tenant.id,
+      customerId: customer.id,
+      tokenHash: hashToken(rawToken),
+      experienceId: `trustid:${tenant.slug}`,
+      lifeosJti: verified.claims.jti,
+      lifeosSid: verified.claims.sid,
+      scopes: verified.claims.scopes,
+      displayName,
+      authProvider: "trustid",
+      expiresAt: finalExpiry,
+    },
+  });
+
+  await writeAudit({
+    tenantId: tenant.id,
+    actorKind: "guest",
+    actorId: customer.id,
+    action: "auth.guest.trustid_session_created",
+    resource: "guest_session",
+    resourceId: session.id,
+    metadata: { trustId: tid, jti: verified.claims.jti, authProvider: "trustid" },
+  });
+
+  const { attachDigiContext } = await import("./pdi/session.js");
+  await attachDigiContext({
+    assertion: opts.assertion,
+    tenantId: tenant.id,
+    actorKind: "guest",
+    actorId: customer.id,
+    hospitalitySessionId: session.id,
+    trustIdSubject: tid,
+  }).catch(() => undefined);
+
+  return {
+    token: rawToken,
+    session: toGuestSessionPublic(session),
+    customer: toCustomerPublic(customer),
+    tenantId: tenant.id,
+    tenantSlug: tenant.slug,
+    trustId: tid,
+    authProvider: "trustid" as const,
+    identity: verified.identity,
+  };
+}
+
 export async function revokeGuestSession(sessionId: string, tenantId: string) {
   const session = await prisma.guestSession.findFirst({
     where: { id: sessionId, tenantId },

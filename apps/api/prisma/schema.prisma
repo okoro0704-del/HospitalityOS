@@ -7,8 +7,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Organization {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  status    String   @default("active")
+  metadata  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenants Tenant[]
+
+  @@index([status])
+}
+
 model Tenant {
   id            String   @id @default(cuid())
+  organizationId String?
   slug          String   @unique
   name          String
   businessType  String
@@ -32,13 +47,15 @@ model Tenant {
   country       String?
   operatingHours Json
   settings      Json
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
 
-  branches      Branch[]
+    organization  Organization? @relation(fields: [organizationId], references: [id])
+    branches      Branch[]
   modules       TenantModule[]
   customers     Customer[]
-  staff         StaffMember[]
+    staff         StaffMember[]
+    identityLinks StaffIdentityLink[]
   guestSessions GuestSession[]
   staffSessions StaffSession[]
   notifications Notification[]
@@ -180,16 +197,42 @@ model StaffMember {
   role         String
   branchIds    Json
   status       String   @default("active")
-  lifeosStaffId String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+    lifeosStaffId String?
+    trustId      String?
+    externalIdentityRef String?
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
 
-  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  sessions StaffSession[]
+    tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+    sessions StaffSession[]
+    identityLinks StaffIdentityLink[]
 
-  @@unique([tenantId, email])
-  @@index([tenantId])
-}
+    @@index([tenantId, trustId])
+    @@index([tenantId, externalIdentityRef])
+
+    @@unique([tenantId, email])
+    @@index([tenantId])
+  }
+
+  model StaffIdentityLink {
+    id              String    @id @default(cuid())
+    tenantId        String
+    staffId         String
+    trustId         String
+    status          String    @default("active")
+    linkedAt        DateTime  @default(now())
+    revokedAt       DateTime?
+    metadata        Json
+    createdAt       DateTime  @default(now())
+    updatedAt       DateTime  @updatedAt
+
+    tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+    staff  StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+    @@unique([tenantId, trustId])
+    @@unique([tenantId, staffId])
+    @@index([trustId])
+  }
 
 model GuestSession {
   id           String   @id @default(cuid())
@@ -201,6 +244,7 @@ model GuestSession {
   lifeosSid    String
   scopes       Json
   displayName  String
+  authProvider String   @default("lifeos")
   expiresAt    DateTime
   revokedAt    DateTime?
   createdAt    DateTime @default(now())
@@ -218,6 +262,11 @@ model StaffSession {
   staffId   String
   tokenHash String   @unique
   role      String
+  authProvider String   @default("legacy_password")
+  trustJti     String?
+  trustSid     String?
+  trustId      String?
+  stepUpAt     Json?
   expiresAt DateTime
   revokedAt DateTime?
   createdAt DateTime @default(now())
@@ -226,6 +275,20 @@ model StaffSession {
   staff  StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([trustId])
+}
+
+model AssertionExchange {
+  id        String   @id @default(cuid())
+  jti       String   @unique
+  trustId   String
+  purpose   String
+  tenantId  String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([trustId])
 }
 
 model Notification {

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { PdiPanel } from "../components/PdiPanel";
 import { apiGet, apiSend, getSession, logout } from "../lib/session";
 
 type GuestCustomer = {
@@ -96,10 +97,25 @@ export function ProfilePage() {
           </dd>
         </div>
         <div>
+          <dt>Account</dt>
+          <dd>
+            {(profile?.customer as { trustId?: string | null } | undefined)?.trustId
+              ? "TrustID linked — one identity across venues"
+              : "Venue guest profile"}
+          </dd>
+        </div>
+        <div>
           <dt>Experience</dt>
           <dd>{session?.experienceId}</dd>
         </div>
       </dl>
+
+      <p className="muted small">
+        Your TrustID is the universal account. Each business keeps its own customer
+        relationship — you do not need separate logins per hotel, restaurant, or spa.
+      </p>
+
+      <PdiPanel />
 
       <h3>Preferences</h3>
       <ul className="list">

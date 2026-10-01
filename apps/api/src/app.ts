@@ -4,6 +4,7 @@ import cookie from "@fastify/cookie";
 import { ZodError } from "zod";
 import { config } from "./config.js";
 import { registerRoutes } from "./routes.js";
+import { registerPdiRoutes } from "./routes-pdi.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -36,5 +37,6 @@ export async function buildApp() {
   });
 
   await registerRoutes(app);
+  await registerPdiRoutes(app);
   return app;
 }

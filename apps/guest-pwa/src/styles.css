@@ -102,6 +102,14 @@ h3,
   animation: rise 420ms ease both;
 }
 
+.pdi-panel {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 .panel h2 {
   margin: 0.2rem 0 0.5rem;
   font-size: 1.55rem;

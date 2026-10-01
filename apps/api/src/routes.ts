@@ -19,8 +19,8 @@ import {
   toStaffSessionPublic,
   toTenantPublic,
 } from "./lib/mappers.js";
-import { createGuestSessionFromHandoff, revokeGuestSession, createDemoGuestSession } from "./services/guest-auth.js";
-import { staffLogin, revokeStaffSession } from "./services/staff-auth.js";
+import { createGuestSessionFromHandoff, revokeGuestSession, createDemoGuestSession, createGuestSessionFromTrustId } from "./services/guest-auth.js";
+import { staffLogin, revokeStaffSession, staffLoginWithTrustId } from "./services/staff-auth.js";
 import { getModuleCatalog, getTenantModules, setTenantModule } from "./services/modules.js";
 import { writeAudit } from "./lib/audit.js";
 import { isModuleId } from "@hospitalityos/shared";
@@ -182,6 +182,18 @@ export async function registerRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  app.post("/auth/guest/trustid/exchange", async (req, reply) => {
+    const body = z.object({ assertion: z.string().min(1), tenantSlug: z.string().min(1) }).parse(req.body);
+    try {
+      const result = await createGuestSessionFromTrustId(body);
+      reply.setCookie(GUEST_COOKIE, result.token, { ...cookieOpts, expires: new Date(result.session.expiresAt) });
+      return { token: result.token, session: result.session, customer: result.customer, tenantId: result.tenantId, tenantSlug: result.tenantSlug, trustId: result.trustId };
+    } catch (err) {
+      const e = err as Error & { code?: string; statusCode?: number };
+      return reply.code(e.statusCode ?? 401).send({ error: e.code ?? "invalid_token", message: e.message });
+    }
+  });
+
   // ── Staff auth (local; LifeOS Business Portal later) ─────────
   app.post("/auth/staff/login", async (req, reply) => {
     const body = z
@@ -205,6 +217,18 @@ export async function registerRoutes(app: FastifyInstance) {
         error: e.code ?? "invalid_credentials",
         message: e.message,
       });
+    }
+  });
+
+  app.post("/auth/staff/trustid/exchange", async (req, reply) => {
+    const body = z.object({ assertion: z.string().min(1), tenantSlug: z.string().min(1) }).parse(req.body);
+    try {
+      const result = await staffLoginWithTrustId(body);
+      reply.setCookie(STAFF_COOKIE, result.token, { ...cookieOpts, expires: new Date(result.session.expiresAt) });
+      return result;
+    } catch (err) {
+      const e = err as Error & { code?: string; statusCode?: number };
+      return reply.code(e.statusCode ?? 401).send({ error: e.code ?? "invalid_token", message: e.message });
     }
   });
 
