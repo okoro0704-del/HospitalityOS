@@ -1,5 +1,5 @@
 import { ddiBaseUrl, digiCoreBaseUrl, InfrastructureError } from "./endpoints.js";
-import { CAPABILITY } from "./vault.js";
+import { CAPABILITY, COMMUNICATION_CAPABILITY } from "./vault.js";
 
 export type DdiConnection = {
   id: string;
@@ -77,7 +77,7 @@ export class HospitalityDdiClient {
     return this.send(`/infrastructures/${encodeURIComponent(infrastructureId)}/apps`, {
       method: "POST",
       headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json", "idempotency-key": idempotencyKey },
-      body: JSON.stringify({ type: "REFERENCE", displayName: "HospitalityOS", capabilities: [CAPABILITY] }),
+      body: JSON.stringify({ type: "REFERENCE", displayName: "HospitalityOS", capabilities: [CAPABILITY, COMMUNICATION_CAPABILITY] }),
     }) as Promise<{ id: string; applicationCredential?: string }>;
   }
 
@@ -90,10 +90,22 @@ export class HospitalityDdiClient {
   }
 
   approve(sessionToken: string, connectionId: string) {
+    return this.approveCapabilities(sessionToken, connectionId, [CAPABILITY]);
+  }
+
+  approveCapabilities(sessionToken: string, connectionId: string, capabilities: string[]) {
     return this.send(`/connections/${encodeURIComponent(connectionId)}/approve`, {
       method: "POST",
       headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ capabilities: [CAPABILITY] }),
+      body: JSON.stringify({ capabilities }),
+    }) as Promise<DdiConnection>;
+  }
+
+  requestCapability(credential: string, connectionId: string, capability: string) {
+    return this.send(`/connections/${encodeURIComponent(connectionId)}/capabilities/request`, {
+      method: "POST",
+      headers: { authorization: `Application ${credential}`, "content-type": "application/json" },
+      body: JSON.stringify({ capabilities: [capability] }),
     }) as Promise<DdiConnection>;
   }
 
@@ -111,24 +123,24 @@ export class HospitalityDdiClient {
     }) as Promise<DdiConnection>;
   }
 
-  async execute(credential: string, executionMode: "APP" | "SPACE", authorityToken: string) {
+  async execute(credential: string, executionMode: "APP" | "SPACE", authorityToken: string, capability = CAPABILITY) {
     if (!this.base) throw new InfrastructureError("DDI_UNAVAILABLE", "DDI is not configured", 503);
     let response: Response;
     try {
       response = await fetch(new URL("/capabilities/execute", this.base), {
         method: "POST",
         headers: { authorization: `Application ${credential}`, "content-type": "application/json" },
-        body: JSON.stringify({ capability: CAPABILITY, executionMode, authorityToken }),
+        body: JSON.stringify({ capability, executionMode, authorityToken }),
       });
     } catch {
       throw new InfrastructureError("DDI_UNAVAILABLE", "DDI is unavailable", 503);
     }
     const body = await readBody(response);
     if (typeof body.status === "string" && (response.ok || body.status === "DENIED" || body.status === "CAPABILITY_UNAVAILABLE" || body.status === "FAILED" || body.status === "AUTHENTICATION_REQUIRED")) {
-      return body as { status: string; reason?: string; data?: { ownerId?: string } };
+      return body as { status: string; reason?: string; provider?: string; data?: { ownerId?: string; accountRef?: string; threads?: Array<{ id: string; channel: string; peerRef?: string; unreadCount?: number }> } };
     }
     if (!response.ok) fail(response, body, "DDI_UNAVAILABLE", "application");
-    return body as { status: string; reason?: string; data?: { ownerId?: string } };
+    return body as { status: string; reason?: string; provider?: string; data?: { ownerId?: string; accountRef?: string; threads?: Array<{ id: string; channel: string; peerRef?: string; unreadCount?: number }> } };
   }
 }
 

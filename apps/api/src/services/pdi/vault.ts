@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:
 import { prisma } from "../../db.js";
 
 const CAPABILITY = "identity.currentActor";
+const COMMUNICATION_CAPABILITY = "communication.inbox";
 
 function key() {
   const secret = process.env.SESSION_SECRET || "dev-only-session-secret-change-me";
@@ -63,6 +64,7 @@ export function ensurePdiVault() {
       grant_id TEXT,
       PRIMARY KEY (digi_owner_id, infrastructure_id)
     )`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE pdi_connection_cache ADD COLUMN communication_grant_id TEXT`).catch(() => undefined);
   })();
   return ready;
 }
@@ -140,6 +142,23 @@ export async function saveConnectionCache(input: { digiOwnerId: string; infrastr
   `;
 }
 
+export async function saveCommunicationGrant(input: { digiOwnerId: string; infrastructureId: string; grantId: string | null }) {
+  await ensurePdiVault();
+  await prisma.$executeRaw`
+    UPDATE pdi_connection_cache SET communication_grant_id = ${input.grantId}
+    WHERE digi_owner_id = ${input.digiOwnerId} AND infrastructure_id = ${input.infrastructureId}
+  `;
+}
+
+export async function readCommunicationGrant(digiOwnerId: string, infrastructureId: string) {
+  await ensurePdiVault();
+  const rows = await prisma.$queryRaw<Array<{ communication_grant_id: string | null }>>`
+    SELECT communication_grant_id FROM pdi_connection_cache
+    WHERE digi_owner_id = ${digiOwnerId} AND infrastructure_id = ${infrastructureId}
+  `;
+  return rows[0]?.communication_grant_id ?? null;
+}
+
 export async function readIdentity(tenantId: string, actorKind: string, actorId: string) {
   await ensurePdiVault();
   const rows = await prisma.$queryRaw<Array<{ trust_id_subject: string; digi_owner_id: string }>>`
@@ -150,4 +169,4 @@ export async function readIdentity(tenantId: string, actorKind: string, actorId:
   return row ? { trustIdSubject: row.trust_id_subject, digiOwnerId: row.digi_owner_id } : null;
 }
 
-export { CAPABILITY };
+export { CAPABILITY, COMMUNICATION_CAPABILITY };

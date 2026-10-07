@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { writeAudit } from "../../lib/audit.js";
 import { HospitalityDdiClient, issueAuthorityToken, projectConnection, type DdiConnection } from "./ddi-client.js";
 import { InfrastructureError } from "./endpoints.js";
-import { CAPABILITY, readApplication, readDigiSession, readIdentity, saveApplication, saveConnectionCache } from "./vault.js";
+import { CAPABILITY, COMMUNICATION_CAPABILITY, readApplication, readCommunicationGrant, readDigiSession, readIdentity, saveApplication, saveCommunicationGrant, saveConnectionCache } from "./vault.js";
 
 export type PdiActor = { tenantId: string; actorKind: "guest" | "staff"; actorId: string; hospitalitySessionId: string };
 
@@ -166,8 +166,52 @@ export async function revokePdi(actor: PdiActor) {
   const current = await cachedConnection(actor);
   const revoked = await client().revoke(current.session.sessionToken, current.connectionId);
   await saveConnectionCache({ digiOwnerId: current.session.digiOwnerId, infrastructureId: current.infrastructureId!, connectionId: revoked.id, status: revoked.status, grantId: null });
+  await saveCommunicationGrant({ digiOwnerId: current.session.digiOwnerId, infrastructureId: current.infrastructureId!, grantId: null });
   await writeAudit({ tenantId: actor.tenantId, actorKind: actor.actorKind, actorId: actor.actorId, action: "PDI_CONNECTION_REVOKED", resource: "pdi_connection", metadata: { status: revoked.status } });
   return surfaceFrom(revoked, "ACTIVE");
+}
+
+export async function requestCommunication(actor: PdiActor) {
+  const current = await cachedConnection(actor);
+  if (current.connectionStatus !== "ACTIVE") {
+    return { capability: COMMUNICATION_CAPABILITY, connection: projectConnection(current.connectionStatus), execution: { status: "DENIED", reason: "CONNECTION_NOT_ACTIVE" } };
+  }
+  const product = await readApplication(current.session.digiOwnerId, current.infrastructureId!);
+  if (!product) throw new InfrastructureError("APPLICATION_CREDENTIAL_REJECTED", "HospitalityOS is not registered on this PDI.", 401);
+  try {
+    await client().requestCapability(product.credential, current.connectionId, COMMUNICATION_CAPABILITY);
+  } catch (error) {
+    if (!(error instanceof InfrastructureError) || error.code !== "CAPABILITY_ALREADY_APPROVED") throw error;
+  }
+  return { capability: COMMUNICATION_CAPABILITY, connection: "REQUESTED" as const, message: "HospitalityOS is requesting access to your conversations." };
+}
+
+export async function approveCommunication(actor: PdiActor) {
+  const current = await cachedConnection(actor);
+  const approved = await client().approveCapabilities(current.session.sessionToken, current.connectionId, [COMMUNICATION_CAPABILITY]);
+  const grantId = approved.authorityGrantRefs?.find((item) => item.capability === COMMUNICATION_CAPABILITY)?.grantId ?? null;
+  await saveCommunicationGrant({ digiOwnerId: current.session.digiOwnerId, infrastructureId: current.infrastructureId!, grantId });
+  await saveConnectionCache({ digiOwnerId: current.session.digiOwnerId, infrastructureId: current.infrastructureId!, connectionId: approved.id, status: approved.status, grantId: approved.authorityGrantRefs?.find((item) => item.capability === CAPABILITY)?.grantId ?? current.grantId });
+  return { capability: COMMUNICATION_CAPABILITY, connection: projectConnection(approved.status) };
+}
+
+export async function executeCommunication(actor: PdiActor, executionMode: "APP" | "SPACE" = "APP") {
+  const current = await cachedConnection(actor);
+  const product = await readApplication(current.session.digiOwnerId, current.infrastructureId!);
+  if (!product) throw new InfrastructureError("APPLICATION_CREDENTIAL_REJECTED", "HospitalityOS is not registered on this PDI.", 401);
+  const communicationGrant = await readCommunicationGrant(current.session.digiOwnerId, current.infrastructureId!);
+  const grantId = communicationGrant ?? current.grantId;
+  if (!grantId) return { capability: COMMUNICATION_CAPABILITY, connection: projectConnection(current.connectionStatus), execution: { status: "DENIED", reason: "CONNECTION_NOT_ACTIVE" } };
+  const authorityToken = await issueAuthorityToken(current.session.sessionToken, grantId);
+  if (!authorityToken) return { capability: COMMUNICATION_CAPABILITY, connection: projectConnection(current.connectionStatus), execution: { status: "DENIED", reason: "CONNECTION_NOT_ACTIVE" } };
+  const result = await client().execute(product.credential, executionMode, authorityToken, COMMUNICATION_CAPABILITY);
+  if (result.status !== "COMPLETED") {
+    return { capability: COMMUNICATION_CAPABILITY, connection: projectConnection(current.connectionStatus), execution: { status: result.status, reason: result.reason } };
+  }
+  if (result.data?.ownerId && result.data.ownerId !== current.session.digiOwnerId) {
+    throw new InfrastructureError("OWNER_MISMATCH", "The PDI returned a different Digi Owner", 403);
+  }
+  return { capability: COMMUNICATION_CAPABILITY, connection: "ACTIVE" as const, execution: { status: "COMPLETED", provider: result.provider, ownerId: result.data?.ownerId, accountRef: result.data?.accountRef, threads: result.data?.threads ?? [] } };
 }
 
 export async function pdiTestDiagnostics(actor: PdiActor) {

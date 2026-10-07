@@ -5,8 +5,11 @@ import {
   approvePdi,
   connectPdi,
   createPersonalPdi,
+  approveCommunication,
+  executeCommunication,
   executeCurrentActor,
   pdiSurface,
+  requestCommunication,
   pdiTestDiagnostics,
   revokePdi,
   type PdiActor,
@@ -70,6 +73,25 @@ function registerActorRoutes(app: FastifyInstance, prefix: string, guard: (req: 
   app.post(`${prefix}/approve`, { preHandler: guard }, async (req, reply) => {
     const actor = actorFrom(req, kind);
     try { return publicView(await approvePdi(actor), await diagnosticsFor(req, actor)); }
+    catch (error) { return send(reply, error); }
+  });
+
+  app.post(`${prefix}/communication/request`, { preHandler: guard }, async (req, reply) => {
+    const actor = actorFrom(req, kind);
+    try { return await requestCommunication(actor); }
+    catch (error) { return send(reply, error); }
+  });
+
+  app.post(`${prefix}/communication/approve`, { preHandler: guard }, async (req, reply) => {
+    const actor = actorFrom(req, kind);
+    try { return await approveCommunication(actor); }
+    catch (error) { return send(reply, error); }
+  });
+
+  app.post(`${prefix}/communication/execute`, { preHandler: guard }, async (req, reply) => {
+    const actor = actorFrom(req, kind);
+    const mode = (req.body as { executionMode?: string } | undefined)?.executionMode === "SPACE" ? "SPACE" : "APP";
+    try { return await executeCommunication(actor, mode); }
     catch (error) { return send(reply, error); }
   });
 

@@ -1,7 +1,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { execSync } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
@@ -51,6 +51,9 @@ let digiBase = "";
 let ddiBase = "";
 let privateKey: CryptoKey;
 const closers: Array<() => Promise<void>> = [];
+const ELFCOM_PORT = 18793;
+const ELFCOM_TOKEN = "hos-pdi-elfcom-proof-token";
+let elfcom: ChildProcess | undefined;
 const activeJtis = new Set<string>();
 
 async function issue(subject: string) {
@@ -69,14 +72,14 @@ async function issue(subject: string) {
 before(async () => {
   if (!databaseUrl) throw new Error("DDI_TEST_DATABASE_URL_REQUIRED");
   assertLocal(databaseUrl);
-  const admin = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5000 });
+  const admin = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 20000 });
   await admin.query(`DROP SCHEMA IF EXISTS ${DDI_SCHEMA} CASCADE`);
   await admin.query(`DROP SCHEMA IF EXISTS ${DIGI_SCHEMA} CASCADE`);
   await admin.query(`DROP SCHEMA IF EXISTS ${AUTHORITY_SCHEMA} CASCADE`);
   await admin.query(`CREATE SCHEMA ${DDI_SCHEMA}`);
   await admin.query(`CREATE SCHEMA ${AUTHORITY_SCHEMA}`);
   await admin.end();
-  pool = new Pool({ connectionString: databaseUrl, max: 8, connectionTimeoutMillis: 5000, options: `-c search_path=${DDI_SCHEMA}` });
+  pool = new Pool({ connectionString: databaseUrl, max: 8, connectionTimeoutMillis: 20000, options: `-c search_path=${DDI_SCHEMA}` });
   const { migrate } = await import(pathToFileURL(path.join(DDI_ROOT, "packages/service/src/postgres.ts")).href) as { migrate(pool: Pool, file: string): Promise<void> };
   await migrate(pool, path.join(DDI_ROOT, "migrations/001_ddi_foundation.sql"));
   await migrate(pool, path.join(DDI_ROOT, "migrations/002_ddi_runtime.sql"));
@@ -154,6 +157,21 @@ before(async () => {
   }
   digiBase = await digi.app.listen({ port: 0, host: "127.0.0.1" });
   closers.push(() => digi.app.close());
+  const elfcomEnv: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", ELFCOM_PORT: String(ELFCOM_PORT), ELFCOM_PDI_SERVICE_TOKEN: ELFCOM_TOKEN };
+  delete elfcomEnv.DATABASE_URL;
+  elfcom = spawn(process.execPath, ["C:/Users/Hp/Desktop/ELFCOMS/node_modules/tsx/dist/cli.mjs", "src/index.ts"], { cwd: "C:/Users/Hp/Desktop/ELFCOMS/apps/elfcom-node", env: elfcomEnv, stdio: ["ignore", "pipe", "pipe"] });
+  let elfcomLog = "";
+  elfcom.stdout?.on("data", (chunk) => { elfcomLog += String(chunk); });
+  elfcom.stderr?.on("data", (chunk) => { elfcomLog += String(chunk); });
+  const elfcomStarted = Date.now();
+  while (!elfcomLog.includes("listening") && Date.now() - elfcomStarted < 60000) {
+    if (elfcom.exitCode !== null) throw new Error(elfcomLog.slice(-1000));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!elfcomLog.includes("listening")) throw new Error(elfcomLog.slice(-1000));
+  closers.push(async () => { if (elfcom?.pid) spawn("taskkill", ["/PID", String(elfcom.pid), "/T", "/F"], { shell: true, stdio: "ignore" }); });
+  process.env.ELFCOM_BASE_URL = `http://127.0.0.1:${ELFCOM_PORT}`;
+  process.env.ELFCOM_PDI_SERVICE_TOKEN = ELFCOM_TOKEN;
   const repository = new PostgresDdiRepository(pool);
   const grants = new HttpDigiAuthorityGrantClient(digiBase);
   const consume = new HttpDigiAuthorityClient({ consumeUrl: `${digiBase}/v1/authority/consume`, jwksUrl: `${digiBase}/.well-known/authority-jwks.json`, verifierModuleUrl: pathToFileURL(path.join(TRUST_ROOT, "packages/authority-verifier/dist/index.js")).href });
@@ -205,10 +223,16 @@ before(async () => {
 });
 
 after(async () => {
-  await app?.close();
-  await prisma?.$disconnect();
-  for (const close of closers.reverse()) await close().catch(() => undefined);
-  await pool?.end().catch(() => undefined);
+  if (elfcom?.pid) spawn("taskkill", ["/PID", String(elfcom.pid), "/T", "/F"], { shell: true, stdio: "ignore" });
+  await Promise.race([
+    (async () => {
+      await app?.close().catch(() => undefined);
+      await prisma?.$disconnect().catch(() => undefined);
+      for (const close of [...closers].reverse()) await close().catch(() => undefined);
+      await pool?.end().catch(() => undefined);
+    })(),
+    new Promise((resolve) => setTimeout(resolve, 8000)),
+  ]);
 });
 
 async function login(subject: string) {
@@ -303,4 +327,30 @@ test("real HospitalityOS PDI lifecycle against committed DDI and Digi", async ()
   assert.equal(publicBody.includes(secret), false);
   assert.equal(publicBody.includes(owner.sessionToken), false);
   assert.equal(publicBody.includes(owner.assertion), false);
+  const blocked = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
+  assert.equal(blocked.json().execution.status, "DENIED");
+  assert.equal(blocked.json().execution.reason, "CAPABILITY_NOT_APPROVED");
+  const requestedCommunication = await app.inject({ method: "POST", url: "/guest/pdi/communication/request", headers: { authorization: `Bearer ${returning.token}` } });
+  assert.equal(requestedCommunication.statusCode, 200, requestedCommunication.body);
+  const approvedCommunication = await app.inject({ method: "POST", url: "/guest/pdi/communication/approve", headers: { authorization: `Bearer ${returning.token}` } });
+  assert.equal(approvedCommunication.statusCode, 200, approvedCommunication.body);
+  assert.equal(approveBodies.at(-1), JSON.stringify({ oneTime: false }));
+  const inbox = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
+  assert.equal(inbox.json().execution.status, "COMPLETED", inbox.body);
+  assert.equal(inbox.json().execution.provider, "ElfCom");
+  assert.equal(inbox.json().execution.ownerId, owner.ownerId);
+  assert.equal(inbox.json().execution.accountRef, `elfcom:${owner.ownerId}`);
+  const inboxSpace = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "SPACE" } });
+  assert.equal(inboxSpace.json().execution.status, "COMPLETED");
+  assert.equal(inboxSpace.json().execution.ownerId, owner.ownerId);
+  assert.equal(inboxSpace.json().execution.accountRef, inbox.json().execution.accountRef);
+  const identityAgain = await app.inject({ method: "POST", url: "/guest/pdi/execute?diagnostics=1", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
+  assert.equal(identityAgain.json().execution.status, "COMPLETED");
+  assert.equal(identityAgain.json().execution.ownerId, inbox.json().execution.ownerId);
+  const counted = await pool.query<{ namespace: string; n: string }>(`SELECT namespace, count(*)::text AS n FROM ddi_primitive_bindings GROUP BY namespace ORDER BY namespace`);
+  assert.deepEqual(counted.rows.map((row) => [row.namespace, Number(row.n)]), [["communication", 1], ["identity", 1]]);
+  assert.equal(inbox.body.includes(ELFCOM_TOKEN), false);
+  assert.equal(inbox.body.includes(owner.sessionToken), false);
+  assert.equal(inbox.body.includes(owner.assertion), false);
+  console.log(`HOS_PDI_COMMUNICATION ${JSON.stringify({ ownerId: inbox.json().execution.ownerId, provider: inbox.json().execution.provider, accountRef: inbox.json().execution.accountRef, threads: inbox.json().execution.threads?.length })}`);
 });
