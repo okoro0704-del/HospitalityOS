@@ -1,0 +1,70 @@
+name: PDI Communication PostgreSQL Verification
+
+on:
+  push:
+    branches: [pdi-canonical-inbox-verification]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pdi_test
+          POSTGRES_PASSWORD: pdi_test
+          POSTGRES_DB: pdi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pdi_test -d pdi_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DDI_TEST_DATABASE_URL: postgresql://pdi_test:pdi_test@127.0.0.1:5432/pdi_test
+      PDI_DDI_ROOT: ${{ github.workspace }}/ddi
+      PDI_ELFCOM_ROOT: ${{ github.workspace }}/elfcom
+      PDI_TRUSTID_ROOT: ${{ github.workspace }}/trustid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: okoro0704-del/DDI
+          ref: 2391f878852ed32e89d5690d867326fd64a6c39a
+          path: ddi
+      - uses: actions/checkout@v4
+        with:
+          repository: okoro0704-del/elfCOM
+          ref: f0b7e7213e4b0c8bf0efe560212ec1cd3764bdbf
+          path: elfcom
+      - uses: actions/checkout@v4
+        with:
+          repository: okoro0704-del/TRUSTID
+          ref: 8bf7852d14fe91ba28670768c7f3b2c898ce581b
+          path: trustid
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install HospitalityOS dependencies
+        run: npm ci
+      - name: Install DDI dependencies
+        working-directory: ddi
+        run: npm ci
+      - name: Build TrustID Digi-RP dependencies
+        working-directory: trustid
+        run: npm ci && npm run build:security && npm run build -w @trustid/digi-rp
+      - name: Build ElfCom node dependencies
+        working-directory: elfcom
+        run: npm ci && npm run build -w @elfcom/node
+      - name: Verify localhost safety gate
+        run: node -e "const h=new URL(process.env.DDI_TEST_DATABASE_URL).hostname;if(!['127.0.0.1','localhost','::1'].includes(h))process.exit(1);console.log('localhost safety gate passed')"
+      - name: Generate HospitalityOS client and typecheck clean candidate
+        run: npm run db:generate -w @hospitalityos/api && npm run typecheck -w @hospitalityos/api
+      - name: Run scoped cross-repository PostgreSQL proof
+        run: node --import tsx --test --test-concurrency=1 apps/api/test/pdi-cross-repo.e2e.test.ts
