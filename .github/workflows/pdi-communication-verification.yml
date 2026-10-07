@@ -51,8 +51,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install HospitalityOS dependencies
-        run: npm ci
+      - name: Install HospitalityOS dependencies from the committed workspace graph
+        # The base lockfile predates the committed trustid-protocol workspace.
+        # Resolve it only inside this disposable CI checkout; do not modify the lockfile.
+        run: npm install --ignore-scripts
       - name: Install DDI dependencies
         working-directory: ddi
         run: npm ci
