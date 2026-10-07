@@ -137,10 +137,10 @@ export class HospitalityDdiClient {
     }
     const body = await readBody(response);
     if (typeof body.status === "string" && (response.ok || body.status === "DENIED" || body.status === "CAPABILITY_UNAVAILABLE" || body.status === "FAILED" || body.status === "AUTHENTICATION_REQUIRED")) {
-      return body as { status: string; reason?: string; provider?: string; data?: { ownerId?: string; accountRef?: string; threads?: Array<{ id: string; channel: string; peerRef?: string; unreadCount?: number }> } };
+      return body as { status: string; reason?: string; provider?: string; data?: { ownerId?: string; threads?: Array<{ id: string; channel: string; peerRef?: string; unreadCount?: number }> } };
     }
     if (!response.ok) fail(response, body, "DDI_UNAVAILABLE", "application");
-    return body as { status: string; reason?: string; provider?: string; data?: { ownerId?: string; accountRef?: string; threads?: Array<{ id: string; channel: string; peerRef?: string; unreadCount?: number }> } };
+    return body as { status: string; reason?: string; provider?: string; data?: { ownerId?: string; threads?: Array<{ id: string; channel: string; peerRef?: string; unreadCount?: number }> } };
   }
 }
 

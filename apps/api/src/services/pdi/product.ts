@@ -211,7 +211,7 @@ export async function executeCommunication(actor: PdiActor, executionMode: "APP"
   if (result.data?.ownerId && result.data.ownerId !== current.session.digiOwnerId) {
     throw new InfrastructureError("OWNER_MISMATCH", "The PDI returned a different Digi Owner", 403);
   }
-  return { capability: COMMUNICATION_CAPABILITY, connection: "ACTIVE" as const, execution: { status: "COMPLETED", provider: result.provider, ownerId: result.data?.ownerId, accountRef: result.data?.accountRef, threads: result.data?.threads ?? [] } };
+  return { capability: COMMUNICATION_CAPABILITY, connection: "ACTIVE" as const, execution: { status: "COMPLETED", provider: result.provider, ownerId: result.data?.ownerId, threads: result.data?.threads ?? [] } };
 }
 
 export async function pdiTestDiagnostics(actor: PdiActor) {
