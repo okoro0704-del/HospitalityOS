@@ -66,7 +66,10 @@ jobs:
         run: npm ci && npm run build -w @elfcom/node
       - name: Verify localhost safety gate
         run: node -e "const h=new URL(process.env.DDI_TEST_DATABASE_URL).hostname;if(!['127.0.0.1','localhost','::1'].includes(h))process.exit(1);console.log('localhost safety gate passed')"
-      - name: Generate HospitalityOS client and typecheck clean candidate
-        run: npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/trustid-protocol && npm run db:generate -w @hospitalityos/api && npm run typecheck -w @hospitalityos/api
+      - name: Generate HospitalityOS client
+        run: npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/trustid-protocol && npm run db:generate -w @hospitalityos/api
+      - name: Typecheck clean candidate
+        run: npm run typecheck -w @hospitalityos/api
       - name: Run scoped cross-repository PostgreSQL proof
+        if: always()
         run: node --import tsx --test --test-concurrency=1 apps/api/test/pdi-cross-repo.e2e.test.ts
