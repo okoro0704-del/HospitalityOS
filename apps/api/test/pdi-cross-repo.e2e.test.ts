@@ -56,6 +56,10 @@ const ELFCOM_PORT = 18793;
 const ELFCOM_TOKEN = "hos-pdi-elfcom-proof-token";
 let elfcom: ChildProcess | undefined;
 const activeJtis = new Set<string>();
+let elfcomBase = "";
+let providerAvailable = true;
+let opaqueThreadId: string | undefined;
+let providerSendRequests = 0;
 
 async function issue(subject: string) {
   const jti = randomUUID();
@@ -171,7 +175,35 @@ before(async () => {
   }
   if (!elfcomLog.includes("listening")) throw new Error(elfcomLog.slice(-1000));
   closers.push(async () => { elfcom?.kill("SIGTERM"); });
-  process.env.ELFCOM_BASE_URL = `http://127.0.0.1:${ELFCOM_PORT}`;
+  elfcomBase = `http://127.0.0.1:${ELFCOM_PORT}`;
+  const providerProxy = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (!providerAvailable) {
+      res.statusCode = 503;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ code: "PROVIDER_UNAVAILABLE" }));
+      return;
+    }
+    if (req.method === "POST" && req.url?.includes("/messages")) providerSendRequests += 1;
+    const upstream = await fetch(new URL(req.url ?? "/", elfcomBase), {
+      method: req.method,
+      headers: { authorization: String(req.headers.authorization ?? ""), "content-type": String(req.headers["content-type"] ?? "") },
+      body: ["GET", "HEAD"].includes(req.method ?? "GET") ? undefined : await readBody(req),
+    });
+    let body = await upstream.text();
+    if (opaqueThreadId && req.method === "GET" && req.url?.startsWith("/v1/pdi/inbox")) {
+      const inbox = JSON.parse(body) as { threads?: unknown[] };
+      inbox.threads = [...(inbox.threads ?? []), { id: opaqueThreadId, channel: "relay", peerRef: "opaque-provider-reference", unreadCount: 0 }];
+      body = JSON.stringify(inbox);
+    }
+    res.statusCode = upstream.status;
+    res.setHeader("content-type", upstream.headers.get("content-type") ?? "application/json");
+    res.end(body);
+  });
+  await new Promise<void>((resolve) => providerProxy.listen(0, "127.0.0.1", resolve));
+  const providerAddress = providerProxy.address();
+  if (!providerAddress || typeof providerAddress === "string") throw new Error("provider proxy failed");
+  closers.push(() => new Promise((resolve, reject) => providerProxy.close((error) => error ? reject(error) : resolve())));
+  process.env.ELFCOM_BASE_URL = `http://127.0.0.1:${providerAddress.port}`;
   process.env.ELFCOM_PDI_SERVICE_TOKEN = ELFCOM_TOKEN;
   const repository = new PostgresDdiRepository(pool);
   const grants = new HttpDigiAuthorityGrantClient(digiBase);
@@ -213,6 +245,9 @@ before(async () => {
   const org = await prisma.organization.create({ data: { name: "E2E Org", slug: "e2e-org", metadata: {} } });
   const tenant = await prisma.tenant.create({ data: { organizationId: org.id, name: "Sunrise Hotel", slug: "sunrise-hotel", status: "active", businessType: "hotel", operatingHours: [], settings: {} } });
   await prisma.branch.create({ data: { tenantId: tenant.id, name: "Main", code: "MAIN", isPrimary: true, timezone: "UTC", status: "active" } });
+  const orgB = await prisma.organization.create({ data: { name: "E2E Org B", slug: "e2e-org-b", metadata: {} } });
+  const tenantB = await prisma.tenant.create({ data: { organizationId: orgB.id, name: "Moonrise Hotel", slug: "moonrise-hotel", status: "active", businessType: "hotel", operatingHours: [], settings: {} } });
+  await prisma.branch.create({ data: { tenantId: tenantB.id, name: "Main", code: "MAIN", isPrimary: true, timezone: "UTC", status: "active" } });
   config.trustidApiUrl = stubBase;
   config.trustidJwksUrl = `${stubBase}/.well-known/jwks.json`;
   config.trustidIssuer = ISSUER;
@@ -236,9 +271,9 @@ after(async () => {
   ]);
 });
 
-async function login(subject: string) {
+async function login(subject: string, tenantSlug = "sunrise-hotel") {
   const assertion = await issue(subject);
-  const response = await app.inject({ method: "POST", url: "/auth/guest/trustid/exchange", payload: { assertion, tenantSlug: "sunrise-hotel" } });
+  const response = await app.inject({ method: "POST", url: "/auth/guest/trustid/exchange", payload: { assertion, tenantSlug } });
   assert.equal(response.statusCode, 200, response.body);
   return response.json() as { token: string; customer: { id: string; trustId: string } };
 }
@@ -365,6 +400,33 @@ test("real HospitalityOS PDI lifecycle against committed DDI and Digi", async ()
   assert.equal(inboxSpace.json().execution.status, "COMPLETED");
   assert.equal(inboxSpace.json().execution.ownerId, owner.ownerId);
   assert.equal((inboxSpace.json().execution.threads as Array<{ id: string }>).some((thread) => thread.id === preThreadId), true);
+  opaqueThreadId = "relay://provider.example/threads/opaque%2Fnon-dm:7f4e";
+  const opaque = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
+  assert.equal(opaque.json().execution.status, "COMPLETED", opaque.body);
+  assert.equal((opaque.json().execution.threads as Array<{ id: string }>).some((thread) => thread.id === opaqueThreadId), true);
+  assert.equal(opaque.body.includes(opaqueThreadId), true);
+  opaqueThreadId = undefined;
+  providerAvailable = false;
+  const outage = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
+  assert.equal(outage.json().execution.status, "CAPABILITY_UNAVAILABLE", outage.body);
+  assert.equal(outage.json().execution.reason, "PROVIDER_UNAVAILABLE", outage.body);
+  providerAvailable = true;
+  const recovered = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
+  assert.equal(recovered.json().execution.status, "COMPLETED", recovered.body);
+  assert.equal((recovered.json().execution.threads as Array<{ id: string }>).some((thread) => thread.id === preThreadId), true);
+  const communicationGrantId = connectionBodies.at(-1)?.authorityGrantRefs?.find((item) => item.capability === "communication.inbox")?.grantId ?? "";
+  assert.ok(communicationGrantId);
+  const issuedCommunicationToken = await fetch(new URL("/authority/token", digiBase), { method: "POST", headers: { authorization: `Bearer ${same!.sessionToken}`, "content-type": "application/json" }, body: JSON.stringify({ grantId: communicationGrantId }) });
+  assert.equal(issuedCommunicationToken.status, 200, await issuedCommunicationToken.text());
+  const communicationAuthority = (await issuedCommunicationToken.json() as { token: string }).token;
+  const sendsBefore = providerSendRequests;
+  for (const executionMode of ["APP", "SPACE"] as const) {
+    const send = await fetch(new URL("/capabilities/execute", ddiBase), { method: "POST", headers: { authorization: `Application ${secret}`, "content-type": "application/json" }, body: JSON.stringify({ capability: "communication.send", authorityToken: communicationAuthority, executionMode, payload: { threadId: preThreadId, body: "must-not-send" } }) });
+    const sendBody = await send.json() as { status?: string; reason?: string; code?: string };
+    assert.notEqual(sendBody.status, "COMPLETED", JSON.stringify(sendBody));
+    assert.ok(["INVALID_REQUEST", "CAPABILITY_NOT_APPROVED", "AUTHORITY_DENIED", "DENIED"].includes(sendBody.reason ?? sendBody.code ?? ""), JSON.stringify(sendBody));
+  }
+  assert.equal(providerSendRequests, sendsBefore);
   const identityAgain = await app.inject({ method: "POST", url: "/guest/pdi/execute?diagnostics=1", headers: { authorization: `Bearer ${returning.token}` }, payload: { executionMode: "APP" } });
   assert.equal(identityAgain.json().execution.status, "COMPLETED");
   assert.equal(identityAgain.json().execution.ownerId, inbox.json().execution.ownerId);
@@ -386,5 +448,23 @@ test("real HospitalityOS PDI lifecycle against committed DDI and Digi", async ()
   const afterReturn = await pool.query<{ id: string; n: string }>(`SELECT id, count(*)::text AS n FROM ddi_primitive_bindings WHERE namespace = 'communication' GROUP BY id`);
   assert.equal(afterReturn.rows.length, 1);
   assert.equal(afterReturn.rows[0]?.id, mailbox.rows[0]?.id);
+  const tenantBLogin = await login(GUEST_B, "moonrise-hotel");
+  const tenantBOwner = sessions.at(-1);
+  assert.ok(tenantBOwner);
+  assert.notEqual(tenantBOwner?.ownerId, owner.ownerId);
+  const bCreated = await app.inject({ method: "POST", url: "/guest/pdi", headers: { authorization: `Bearer ${tenantBLogin.token}` } });
+  assert.equal(bCreated.json().infrastructure, "ACTIVE", bCreated.body);
+  const bConnected = await app.inject({ method: "POST", url: "/guest/pdi/connect", headers: { authorization: `Bearer ${tenantBLogin.token}` } });
+  assert.equal(bConnected.json().connection, "REQUESTED", bConnected.body);
+  const bApproved = await app.inject({ method: "POST", url: "/guest/pdi/approve", headers: { authorization: `Bearer ${tenantBLogin.token}` } });
+  assert.equal(bApproved.json().connection, "ACTIVE", bApproved.body);
+  const bCommunicationRequested = await app.inject({ method: "POST", url: "/guest/pdi/communication/request", headers: { authorization: `Bearer ${tenantBLogin.token}` } });
+  assert.equal(bCommunicationRequested.statusCode, 200, bCommunicationRequested.body);
+  const bCommunicationApproved = await app.inject({ method: "POST", url: "/guest/pdi/communication/approve", headers: { authorization: `Bearer ${tenantBLogin.token}` } });
+  assert.equal(bCommunicationApproved.statusCode, 200, bCommunicationApproved.body);
+  const stolenTenantInbox = await app.inject({ method: "POST", url: "/guest/pdi/communication/execute", headers: { authorization: `Bearer ${tenantBLogin.token}` }, payload: { executionMode: "APP", pdiId: mailbox.rows[0]?.id, bindingId: mailbox.rows[0]?.id, ownerId: owner.ownerId, providerReference: mailbox.rows[0]?.provider_reference, threadId: preThreadId } });
+  assert.equal(stolenTenantInbox.json().execution.status, "COMPLETED", stolenTenantInbox.body);
+  assert.equal(stolenTenantInbox.json().execution.ownerId, tenantBOwner?.ownerId);
+  assert.equal((stolenTenantInbox.json().execution.threads as Array<{ id: string }>).some((thread) => thread.id === preThreadId), false);
   console.log(`HOS_PDI_COMMUNICATION ${JSON.stringify({ ownerId: inbox.json().execution.ownerId, provider: inbox.json().execution.provider, preThreadId, threads: inbox.json().execution.threads?.length, sameMailbox: afterReturn.rows[0]?.id === mailbox.rows[0]?.id })}`);
 });

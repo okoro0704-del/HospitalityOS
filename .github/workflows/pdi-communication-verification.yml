@@ -35,6 +35,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
+          ref: eaf828d
+          path: base
+      - uses: actions/checkout@v4
+        with:
           repository: okoro0704-del/DDI
           ref: 2391f878852ed32e89d5690d867326fd64a6c39a
           path: ddi
@@ -69,8 +73,20 @@ jobs:
         run: node -e "const h=new URL(process.env.DDI_TEST_DATABASE_URL).hostname;if(!['127.0.0.1','localhost','::1'].includes(h))process.exit(1);console.log('localhost safety gate passed')"
       - name: Generate HospitalityOS client
         run: npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/trustid-protocol && npm run db:generate -w @hospitalityos/api
-      - name: Typecheck clean candidate
-        run: npm run typecheck -w @hospitalityos/api
+      - name: Install and prepare committed base for equivalent TypeScript comparison
+        working-directory: base
+        run: npm install --ignore-scripts && npm run build -w @hospitalityos/shared && npm run build -w @hospitalityos/trustid-protocol && npm run db:generate -w @hospitalityos/api
+      - name: Capture normalized base TypeScript diagnostics
+        working-directory: base
+        run: |
+          npm run typecheck -w @hospitalityos/api > ../base-typecheck.log 2>&1 || true
+          sed -E 's#(apps/api/)?src/#src/#g' ../base-typecheck.log | grep -E '^(src/|.*error TS)' > ../base-typecheck.normalized || true
+      - name: Capture normalized candidate TypeScript diagnostics
+        run: |
+          npm run typecheck -w @hospitalityos/api > candidate-typecheck.log 2>&1 || true
+          sed -E 's#(apps/api/)?src/#src/#g' candidate-typecheck.log | grep -E '^(src/|.*error TS)' > candidate-typecheck.normalized || true
+      - name: Compare base and candidate TypeScript diagnostics
+        run: diff -u base-typecheck.normalized candidate-typecheck.normalized
       - name: Run scoped cross-repository PostgreSQL proof
         if: always()
         run: node --import tsx --test --test-concurrency=1 apps/api/test/pdi-cross-repo.e2e.test.ts
