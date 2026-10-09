@@ -27,6 +27,7 @@ jobs:
           --health-retries 12
     env:
       DDI_TEST_DATABASE_URL: postgresql://pdi_test:pdi_test@127.0.0.1:5432/pdi_test
+      DATABASE_URL: file:./pdi-e2e.db
       PDI_DDI_ROOT: ${{ github.workspace }}/ddi
       PDI_ELFCOM_ROOT: ${{ github.workspace }}/elfcom
       PDI_TRUSTID_ROOT: ${{ github.workspace }}/trustid
