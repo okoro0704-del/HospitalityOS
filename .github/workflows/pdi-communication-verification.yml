@@ -35,8 +35,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: eaf828d
+          ref: release/pdi-product-integration-v1
           path: base
+      - name: Assert exact committed TypeScript baseline
+        working-directory: base
+        run: test "$(git rev-parse HEAD)" = "eaf828dbf17993b1beda4dd232d4642b26726e54"
       - uses: actions/checkout@v4
         with:
           repository: okoro0704-del/DDI
