@@ -417,7 +417,7 @@ test("real HospitalityOS PDI lifecycle against committed DDI and Digi", async ()
   const communicationGrantId = connectionBodies.at(-1)?.authorityGrantRefs?.find((item) => item.capability === "communication.inbox")?.grantId ?? "";
   assert.ok(communicationGrantId);
   const issuedCommunicationToken = await fetch(new URL("/authority/token", digiBase), { method: "POST", headers: { authorization: `Bearer ${same!.sessionToken}`, "content-type": "application/json" }, body: JSON.stringify({ grantId: communicationGrantId }) });
-  assert.equal(issuedCommunicationToken.status, 200, await issuedCommunicationToken.text());
+  assert.equal(issuedCommunicationToken.status, 200, await issuedCommunicationToken.clone().text());
   const communicationAuthority = (await issuedCommunicationToken.json() as { token: string }).token;
   const sendsBefore = providerSendRequests;
   for (const executionMode of ["APP", "SPACE"] as const) {
