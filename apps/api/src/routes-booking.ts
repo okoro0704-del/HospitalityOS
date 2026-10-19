@@ -16,6 +16,7 @@ import {
   type StaffAuth,
   type GuestAuth,
 } from "./lib/auth.js";
+import { branchIdFilter, canAccessBranch } from "./lib/branch-scope.js";
 import { prisma } from "./db.js";
 import { writeAudit } from "./lib/audit.js";
 import { parseJsonArray } from "./lib/crypto.js";
@@ -154,18 +155,23 @@ export async function registerBookingRoutes(app: FastifyInstance) {
 
   app.get("/booking/resources", { preHandler: staffAny }, async (req) => {
     const q = req.query as { moduleId?: string; categoryId?: string };
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const resources = await prisma.bookableResource.findMany({
       where: {
         tenantId: req.tenantId!,
         ...(q.moduleId ? { moduleId: q.moduleId } : {}),
         ...(q.categoryId ? { categoryId: q.categoryId } : {}),
+        ...(branchFilter
+          ? { OR: [{ branchId: null }, { branchId: branchFilter }] }
+          : {}),
       },
       orderBy: { name: "asc" },
     });
     return { resources: resources.map(mapResource) };
   });
 
-  app.post("/booking/resources", { preHandler: staffAdmin }, async (req) => {
+  app.post("/booking/resources", { preHandler: staffAdmin }, async (req, reply) => {
     const body = z
       .object({
         categoryId: z.string(),
@@ -180,6 +186,17 @@ export async function registerBookingRoutes(app: FastifyInstance) {
         status: z.enum(RESOURCE_STATUSES).optional(),
       })
       .parse(req.body);
+
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    if (body.branchId) {
+      const branch = await prisma.branch.findFirst({
+        where: { id: body.branchId, tenantId: req.tenantId! },
+      });
+      if (!branch) return tenantNotFound(reply);
+    }
 
     const resource = await prisma.bookableResource.create({
       data: {

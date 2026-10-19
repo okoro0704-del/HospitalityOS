@@ -2,7 +2,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   staffHasBillingPermission,
+  staffHasPermission,
+  MANUAL_PAYMENT_METHODS,
+  GUEST_MANUAL_PAYMENT_METHODS,
   type BillingPermission,
+  type Permission,
   SUPPORTED_CURRENCIES,
 } from "@hospitalityos/shared";
 import { prisma } from "./db.js";
@@ -14,16 +18,23 @@ import {
   type GuestAuth,
 } from "./lib/auth.js";
 import { requireBillingModule } from "./lib/module-gate.js";
+import { canAccessBranch, branchIdFilter } from "./lib/branch-scope.js";
 import {
   authorizeAndCapture,
   cancelPaymentIntent,
+  collectManualPayment,
   createCreditNote,
   createInvoice,
+  createManualPaymentIntent,
   createPaymentIntent,
   createRefund,
   getBillingDashboard,
+  getBranchDailyReconciliation,
+  getStaffCollectionsSummary,
+  closeDailyReconciliation,
   processWebhook,
   recordCashPayment,
+  verifyManualPayment,
 } from "./services/billing/engine.js";
 import {
   billAccommodation,
@@ -34,12 +45,22 @@ import {
   billFitness,
   billSpa,
 } from "./services/billing/verticals.js";
+import { getGuestActivity } from "./services/billing/lifecycle.js";
 
-function mapErr(err: unknown) {
+function mapErr(err: unknown, requestId?: string) {
   const e = err as { statusCode?: number; code?: string; message?: string };
+  let code = e.code ?? "internal_error";
+  if (typeof code === "string" && (code.startsWith("P") || code.includes("Prisma"))) {
+    code = "internal_error";
+  }
+  const status = e.statusCode ?? 500;
   return {
-    status: e.statusCode ?? 500,
-    body: { error: e.code ?? "internal_error", message: e.message ?? "Unexpected error" },
+    status,
+    body: {
+      error: code,
+      message: status >= 500 ? "Internal server error" : (e.message ?? "Unexpected error"),
+      ...(requestId ? { requestId } : {}),
+    },
   };
 }
 
@@ -59,12 +80,35 @@ async function billingStaff(permission: BillingPermission) {
   };
 }
 
+/** Prefer Wave A payment permissions; fall back to billing.* for legacy roles. */
+async function paymentPerm(permission: Permission, billingFallback?: BillingPermission) {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    await requireStaff(req, reply);
+    if (reply.sent) return;
+    await requireBillingModule(req, reply);
+    if (reply.sent) return;
+    const auth = req.auth as StaffAuth;
+    const ok =
+      staffHasPermission(auth.role, permission) ||
+      (billingFallback ? staffHasBillingPermission(auth.role, billingFallback) : false);
+    if (!ok) {
+      return reply.code(403).send({
+        error: "forbidden",
+        message: `Missing permission ${permission}`,
+      });
+    }
+  };
+}
+
 export async function registerBillingRoutes(app: FastifyInstance) {
   const view = await billingStaff("billing.view");
   const create = await billingStaff("billing.create");
   const update = await billingStaff("billing.update");
-  const refund = await billingStaff("billing.refund");
+  const refund = await paymentPerm("payments.refund", "billing.refund");
   const cash = await billingStaff("billing.cash");
+  const collect = await paymentPerm("payments.collect", "billing.cash");
+  const verify = await paymentPerm("payments.verify", "billing.admin");
+  const collectionsView = await paymentPerm("payments.read", "billing.view");
   const taxPerm = await billingStaff("billing.tax");
   const settlement = await billingStaff("billing.settlement");
   const admin = await billingStaff("billing.admin");
@@ -130,7 +174,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return reply.code(201).send({ invoice });
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -199,7 +243,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return reply.code(201).send({ intent });
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -217,7 +261,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return { ...result };
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -233,14 +277,21 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return { intent };
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
 
   app.get("/billing/payments", { preHandler: view }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const payments = await prisma.payment.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter
+          ? { OR: [{ branchId: null }, { branchId: branchFilter }] }
+          : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 100,
     });
@@ -249,11 +300,15 @@ export async function registerBillingRoutes(app: FastifyInstance) {
 
   app.get("/billing/payments/:id", { preHandler: view }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
     const payment = await prisma.payment.findFirst({
       where: { id, tenantId: req.tenantId! },
       include: { refunds: true, receipts: true },
     });
     if (!payment) return tenantNotFound(reply);
+    if (payment.branchId && !canAccessBranch(auth, payment.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     return { payment };
   });
 
@@ -263,19 +318,194 @@ export async function registerBillingRoutes(app: FastifyInstance) {
         invoiceId: z.string().min(1),
         amount: z.number().int().positive(),
         idempotencyKey: z.string().min(1),
+        branchId: z.string().optional(),
+        notes: z.string().optional(),
+        externalReference: z.string().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     try {
       const payment = await recordCashPayment({
         tenantId: req.tenantId!,
         invoiceId: body.invoiceId,
         amount: body.amount,
-        staffId: (req.auth as StaffAuth).staffId,
+        staffId: auth.staffId,
         idempotencyKey: body.idempotencyKey,
+        branchId: body.branchId,
+        notes: body.notes,
+        externalReference: body.externalReference,
+        correlationId: req.id,
       });
       return reply.code(201).send({ payment });
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
+      return reply.code(m.status).send(m.body);
+    }
+  });
+
+  app.get("/billing/manual-methods", { preHandler: view }, async () => ({
+    methods: MANUAL_PAYMENT_METHODS,
+  }));
+
+  app.post("/billing/payments/manual/intent", { preHandler: collect }, async (req, reply) => {
+    const body = z
+      .object({
+        invoiceId: z.string().min(1),
+        amount: z.number().int().positive(),
+        methodType: z.enum(MANUAL_PAYMENT_METHODS),
+        idempotencyKey: z.string().min(1),
+        branchId: z.string().optional(),
+        notes: z.string().optional(),
+      })
+      .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    try {
+      const intent = await createManualPaymentIntent({
+        tenantId: req.tenantId!,
+        ...body,
+        actorKind: "staff",
+        actorId: auth.staffId,
+        correlationId: req.id,
+      });
+      return reply.code(201).send({ intent });
+    } catch (err) {
+      const m = mapErr(err, req.id);
+      return reply.code(m.status).send(m.body);
+    }
+  });
+
+  app.post("/billing/payments/manual/collect", { preHandler: collect }, async (req, reply) => {
+    const body = z
+      .object({
+        invoiceId: z.string().optional(),
+        intentId: z.string().optional(),
+        amount: z.number().int().positive().optional(),
+        methodType: z.enum(MANUAL_PAYMENT_METHODS),
+        idempotencyKey: z.string().min(1),
+        branchId: z.string().optional(),
+        collectedByStaffId: z.string().optional(),
+        externalReference: z.string().optional(),
+        notes: z.string().optional(),
+        terminalName: z.string().optional(),
+        receivedAt: z.string().datetime().optional(),
+      })
+      .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    try {
+      const result = await collectManualPayment({
+        tenantId: req.tenantId!,
+        invoiceId: body.invoiceId,
+        intentId: body.intentId,
+        amount: body.amount,
+        methodType: body.methodType,
+        staffId: auth.staffId,
+        collectedByStaffId: body.collectedByStaffId,
+        branchId: body.branchId,
+        idempotencyKey: body.idempotencyKey,
+        externalReference: body.externalReference,
+        notes: body.notes,
+        terminalName: body.terminalName,
+        receivedAt: body.receivedAt ? new Date(body.receivedAt) : undefined,
+        actorKind: "staff",
+        correlationId: req.id,
+        allowCollectForOthers: staffHasPermission(auth.role, "payments.manage"),
+      });
+      return reply.code(201).send(result);
+    } catch (err) {
+      const m = mapErr(err, req.id);
+      return reply.code(m.status).send(m.body);
+    }
+  });
+
+  app.post("/billing/payments/:id/verify", { preHandler: verify }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ notes: z.string().optional() }).parse(req.body ?? {});
+    const auth = req.auth as StaffAuth;
+    try {
+      const result = await verifyManualPayment({
+        tenantId: req.tenantId!,
+        paymentId: id,
+        staffId: auth.staffId,
+        notes: body.notes,
+      });
+      return result;
+    } catch (err) {
+      const m = mapErr(err, req.id);
+      return reply.code(m.status).send(m.body);
+    }
+  });
+
+  app.get("/billing/collections/today", { preHandler: collectionsView }, async (req, reply) => {
+    const q = req.query as { branchId?: string; day?: string };
+    const auth = req.auth as StaffAuth;
+    if (q.branchId && !canAccessBranch(auth, q.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    const summary = await getStaffCollectionsSummary({
+      tenantId: req.tenantId!,
+      branchId: q.branchId,
+      day: q.day ? new Date(q.day) : undefined,
+    });
+    return { summary };
+  });
+
+  app.get("/billing/reconciliation/daily", { preHandler: collectionsView }, async (req, reply) => {
+    const q = req.query as {
+      branchId?: string;
+      day?: string;
+      openingCash?: string;
+      countedTotal?: string;
+    };
+    const auth = req.auth as StaffAuth;
+    if (q.branchId && !canAccessBranch(auth, q.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    const reconciliation = await getBranchDailyReconciliation({
+      tenantId: req.tenantId!,
+      branchId: q.branchId,
+      day: q.day ? new Date(q.day) : undefined,
+      openingCash: q.openingCash ? Number(q.openingCash) : 0,
+      countedTotal: q.countedTotal !== undefined ? Number(q.countedTotal) : undefined,
+    });
+    return { reconciliation };
+  });
+
+  app.post("/billing/reconciliation/close", { preHandler: settlement }, async (req, reply) => {
+    const body = z
+      .object({
+        branchId: z.string().optional().nullable(),
+        day: z.string().optional(),
+        openingCash: z.number().int().nonnegative().optional(),
+        countedTotal: z.number().int().nonnegative(),
+        notes: z.string().optional().nullable(),
+      })
+      .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    try {
+      const result = await closeDailyReconciliation({
+        tenantId: req.tenantId!,
+        branchId: body.branchId,
+        day: body.day ? new Date(body.day) : undefined,
+        openingCash: body.openingCash,
+        countedTotal: body.countedTotal,
+        staffId: auth.staffId,
+        notes: body.notes,
+      });
+      return reply.code(result.alreadyClosed ? 200 : 201).send(result);
+    } catch (err) {
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -299,14 +529,17 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       })
       .parse(req.body);
     try {
+      const auth = req.auth as StaffAuth;
       const r = await createRefund({
         tenantId: req.tenantId!,
         ...body,
-        staffId: (req.auth as StaffAuth).staffId,
+        staffId: auth.staffId,
+        authorizedByStaffId: auth.staffId,
+        correlationId: req.id,
       });
       return reply.code(201).send({ refund: r });
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -345,7 +578,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return reply.code(201).send({ creditNote: note });
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -405,16 +638,27 @@ export async function registerBillingRoutes(app: FastifyInstance) {
         signature: z.string().optional(),
       })
       .parse(req.body);
+    const { verifyWebhookSignature } = await import("./services/platform-auth.js");
+    const signature =
+      body.signature ??
+      (req.headers["x-hos-signature"] as string | undefined) ??
+      (req.headers["x-webhook-signature"] as string | undefined);
+    if (!verifyWebhookSignature(body.payload, signature)) {
+      return reply.code(401).send({
+        error: "unauthorized",
+        message: "Invalid webhook signature",
+      });
+    }
     try {
       const event = await processWebhook({
         provider: body.provider,
-        payload: { ...body.payload, tenantId: req.tenantId! },
-        signature: body.signature,
+        payload: body.payload,
+        signature,
         tenantId: req.tenantId!,
       });
       return { event };
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -463,6 +707,49 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     return { invoice };
   });
 
+  app.get("/guest/billing/manual-methods", { preHandler: requireGuest }, async () => ({
+    methods: GUEST_MANUAL_PAYMENT_METHODS,
+  }));
+
+  app.post("/guest/billing/manual/request", { preHandler: requireGuest }, async (req, reply) => {
+    const auth = req.auth as GuestAuth;
+    const body = z
+      .object({
+        invoiceId: z.string().min(1),
+        methodType: z.enum(GUEST_MANUAL_PAYMENT_METHODS),
+        idempotencyKey: z.string().min(1),
+        notes: z.string().optional(),
+      })
+      .parse(req.body);
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: body.invoiceId, tenantId: auth.tenantId, customerId: auth.customerId },
+    });
+    if (!invoice) return reply.code(404).send({ error: "not_found" });
+    try {
+      const intent = await createManualPaymentIntent({
+        tenantId: auth.tenantId,
+        invoiceId: invoice.id,
+        amount: invoice.amountDue,
+        methodType: body.methodType,
+        idempotencyKey: body.idempotencyKey,
+        actorKind: "guest",
+        actorId: auth.customerId,
+        notes: body.notes,
+        correlationId: req.id,
+      });
+      return reply.code(201).send({
+        intent,
+        message:
+          body.methodType === "pay_to_staff"
+            ? "Please pay a staff member. You will see a receipt when payment is recorded."
+            : "Please pay at the venue. You will see a receipt when payment is recorded.",
+      });
+    } catch (err) {
+      const m = mapErr(err, req.id);
+      return reply.code(m.status).send(m.body);
+    }
+  });
+
   app.post("/guest/billing/payment-intents", { preHandler: requireGuest }, async (req, reply) => {
     const auth = req.auth as GuestAuth;
     const body = z
@@ -487,7 +774,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return reply.code(201).send({ intent });
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -510,7 +797,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       });
       return result;
     } catch (err) {
-      const m = mapErr(err);
+      const m = mapErr(err, req.id);
       return reply.code(m.status).send(m.body);
     }
   });
@@ -531,5 +818,34 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       orderBy: { createdAt: "desc" },
     });
     return { receipts };
+  });
+
+  app.get("/guest/billing/receipts/:id", { preHandler: requireGuest }, async (req, reply) => {
+    const auth = req.auth as GuestAuth;
+    const { id } = req.params as { id: string };
+    const receipt = await prisma.receipt.findFirst({
+      where: { id, tenantId: auth.tenantId, customerId: auth.customerId },
+      include: {
+        payment: { select: { id: true, methodType: true, status: true, collectedByStaffId: true } },
+        invoice: { select: { id: true, number: true, status: true, total: true, amountPaid: true, amountDue: true } },
+      },
+    });
+    if (!receipt) return reply.code(404).send({ error: "not_found" });
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: auth.tenantId },
+      select: { name: true, slug: true },
+    });
+    return {
+      receipt: {
+        ...receipt,
+        business: tenant,
+        // Never expose provider secrets / card credentials
+      },
+    };
+  });
+
+  app.get("/guest/activity", { preHandler: requireGuest }, async (req) => {
+    const auth = req.auth as GuestAuth;
+    return getGuestActivity({ tenantId: auth.tenantId, customerId: auth.customerId });
   });
 }

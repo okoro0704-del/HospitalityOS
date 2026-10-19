@@ -7,6 +7,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Organization groups one or more tenants (e.g. multi-brand / multi-property group).
+/// Platform admins manage the platform; tenant staff manage only their organization/tenants.
 model Organization {
   id        String   @id @default(cuid())
   slug      String   @unique
@@ -19,6 +21,32 @@ model Organization {
   tenants Tenant[]
 
   @@index([status])
+}
+
+/// Platform-level administrator — NOT a tenant staff member.
+model PlatformAdmin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions PlatformAdminSession[]
+}
+
+model PlatformAdminSession {
+  id        String    @id @default(cuid())
+  adminId   String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
 }
 
 model Tenant {
@@ -47,15 +75,16 @@ model Tenant {
   country       String?
   operatingHours Json
   settings      Json
-    createdAt     DateTime @default(now())
-    updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-    organization  Organization? @relation(fields: [organizationId], references: [id])
-    branches      Branch[]
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  branches      Branch[]
   modules       TenantModule[]
   customers     Customer[]
-    staff         StaffMember[]
-    identityLinks StaffIdentityLink[]
+  staff         StaffMember[]
+  staffIdentityLinks StaffIdentityLink[]
+  stepUpChallenges   StepUpChallenge[]
   guestSessions GuestSession[]
   staffSessions StaffSession[]
   notifications Notification[]
@@ -76,7 +105,6 @@ model Tenant {
   coupons            Coupon[]
   taxRules           TaxRule[]
   mediaAssets        MediaAsset[]
-  businessPublications BusinessPublication[]
   catalogTags        CatalogTag[]
   diningAreas        DiningArea[]
   diningMenus        DiningMenu[]
@@ -94,6 +122,10 @@ model Tenant {
   inventoryItems     InventoryItem[]
   inventorySuppliers InventorySupplier[]
   operationalAssets  OperationalAsset[]
+
+  @@index([organizationId])
+  @@index([status])
+  businessPublications BusinessPublication[]
 }
 
 model Branch {
@@ -189,53 +221,65 @@ model Customer {
   @@index([tenantId, trustId])
 }
 
+/// Staff membership within a tenant (HospitalityOS internal auth boundary).
+/// Empty branchIds JSON array = organization-wide (all branches) access for that tenant.
+/// TrustID authenticates WHO; HospitalityOS authorizes WHAT (role/branch/permissions).
 model StaffMember {
   id           String   @id @default(cuid())
   tenantId     String
   displayName  String
   email        String
-  passwordHash String
+  /// Optional when staff authenticates exclusively via TrustID.
+  /// LEGACY / DEVELOPMENT AUTHENTICATION — prefer TrustID.
+  passwordHash String?
   role         String
   branchIds    Json
   status       String   @default("active")
-    lifeosStaffId String?
-    trustId      String?
-    externalIdentityRef String?
-    createdAt    DateTime @default(now())
-    updatedAt    DateTime @updatedAt
+  lifeosStaffId String?
+  /// Denormalized TrustID subject for lookup; authoritative link is StaffIdentityLink
+  trustId      String?
+  externalIdentityRef String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-    tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-    sessions StaffSession[]
-    identityLinks StaffIdentityLink[]
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions       StaffSession[]
+  identityLinks  StaffIdentityLink[]
+  stepUpChallenges StepUpChallenge[]
 
-    @@index([tenantId, trustId])
-    @@index([tenantId, externalIdentityRef])
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([tenantId, role])
+  @@index([tenantId, status])
+  @@index([tenantId, trustId])
+  @@index([tenantId, externalIdentityRef])
+}
 
-    @@unique([tenantId, email])
-    @@index([tenantId])
-  }
+/// Explicit TrustID ↔ staff membership link. Authentication ≠ authorization.
+/// A valid TID without an active link must receive forbidden — never staff access.
+model StaffIdentityLink {
+  id              String    @id @default(cuid())
+  tenantId        String
+  staffId         String
+  /// Immutable TrustID subject (TID-…)
+  trustId         String
+  status          String    @default("active")
+  linkedAt        DateTime  @default(now())
+  linkedByStaffId String?
+  verifiedAt      DateTime?
+  revokedAt       DateTime?
+  metadata        Json
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  model StaffIdentityLink {
-    id              String    @id @default(cuid())
-    tenantId        String
-    staffId         String
-    trustId         String
-    status          String    @default("active")
-    linkedAt        DateTime  @default(now())
-    linkedByStaffId String?
-    verifiedAt      DateTime?
-    revokedAt       DateTime?
-    metadata        Json
-    createdAt       DateTime  @default(now())
-    updatedAt       DateTime  @updatedAt
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff  StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
-    tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-    staff  StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
-
-    @@unique([tenantId, trustId])
-    @@unique([tenantId, staffId])
-    @@index([trustId])
-  }
+  @@unique([tenantId, trustId])
+  @@unique([tenantId, staffId])
+  @@index([trustId])
+  @@index([tenantId, status])
+}
 
 model GuestSession {
   id           String   @id @default(cuid())
@@ -247,6 +291,7 @@ model GuestSession {
   lifeosSid    String
   scopes       Json
   displayName  String
+  /// trustid | lifeos | demo | legacy
   authProvider String   @default("lifeos")
   expiresAt    DateTime
   revokedAt    DateTime?
@@ -257,30 +302,40 @@ model GuestSession {
 
   @@index([tenantId])
   @@index([lifeosJti])
+  @@index([lifeosSid])
 }
 
 model StaffSession {
-  id        String   @id @default(cuid())
-  tenantId  String
-  staffId   String
-  tokenHash String   @unique
-  role      String
-  authProvider String   @default("legacy_password")
+  id           String    @id @default(cuid())
+  tenantId     String
+  staffId      String
+  tokenHash    String    @unique
+  role         String
+  /// trustid | legacy_password
+  authProvider String    @default("legacy_password")
+  /// TrustID assertion jti at login (for revoke correlation)
   trustJti     String?
+  /// TrustID session sid at login
   trustSid     String?
+  /// TrustID subject
   trustId      String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  /// Last satisfied step-up (unix ms) per action class, JSON map
   stepUpAt     Json?
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt    DateTime  @default(now())
 
-  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  staff  StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff            StaffMember       @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  stepUpChallenges StepUpChallenge[]
 
   @@index([tenantId])
+  @@index([trustJti])
+  @@index([trustSid])
   @@index([trustId])
 }
 
+/// Durable one-time exchange records (replay protection across processes).
 model AssertionExchange {
   id        String   @id @default(cuid())
   jti       String   @unique
@@ -292,6 +347,28 @@ model AssertionExchange {
 
   @@index([expiresAt])
   @@index([trustId])
+}
+
+/// Sensitive action step-up challenges — TrustID proves authn; HOS still authorizes.
+model StepUpChallenge {
+  id             String    @id @default(cuid())
+  tenantId       String
+  staffId        String
+  staffSessionId String
+  action         String
+  status         String    @default("pending")
+  requiredScopes Json
+  jti            String?
+  expiresAt      DateTime
+  satisfiedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staff        StaffMember  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffSession StaffSession @relation(fields: [staffSessionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, staffId, status])
+  @@index([staffSessionId])
 }
 
 model Notification {
@@ -347,6 +424,7 @@ model AuditLog {
 model Property {
   id              String   @id @default(cuid())
   tenantId        String
+  branchId        String?
   name            String
   code            String
   propertyType    String
@@ -377,6 +455,7 @@ model Property {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, branchId])
 }
 
 model Building {
@@ -445,7 +524,7 @@ model RoomType {
   description      String?
   capacity         Int      @default(2)
   bedConfiguration String?
-  baseRate         Float    @default(0)
+  baseRate Int            @default(0)
   currency         String   @default("USD")
   photoUrls        Json
   status           String   @default("active")
@@ -484,7 +563,7 @@ model RatePlan {
   code        String
   description String?
   currency    String   @default("USD")
-  amount      Float
+  amount      Int
   status      String   @default("active")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1040,7 +1119,7 @@ model Offering {
   status           String    @default("draft")
   visibility       String    @default("public")
   featured         Boolean   @default(false)
-  basePrice        Float     @default(0)
+  basePrice Int            @default(0)
   currencyCode     String    @default("USD")
   moduleId         String?
   tags             Json
@@ -1118,7 +1197,7 @@ model PackageDetail {
   id                  String  @id @default(cuid())
   tenantId            String
   offeringId          String  @unique
-  bundlePrice         Float?
+  bundlePrice         Int?
   validityDays        Int?
   inheritAvailability Boolean @default(true)
   metadata            Json
@@ -1151,7 +1230,7 @@ model Variant {
   offeringId String
   name       String
   sku        String?
-  priceDelta Float   @default(0)
+  priceDelta Int   @default(0)
   status     String  @default("active")
   metadata   Json
 
@@ -1183,7 +1262,7 @@ model Option {
   tenantId      String
   optionGroupId String
   name          String
-  priceDelta    Float  @default(0)
+  priceDelta Int     @default(0)
   status        String @default("active")
 
   group OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
@@ -1197,7 +1276,7 @@ model Modifier {
   tenantId   String
   offeringId String
   name       String
-  priceDelta Float  @default(0)
+  priceDelta Int  @default(0)
   status     String @default("active")
 
   offering Offering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
@@ -1207,22 +1286,24 @@ model Modifier {
 }
 
 model MediaAsset {
-  id          String    @id @default(cuid())
-  tenantId    String
-  offeringId  String?
-  url         String
-  kind        String    @default("image")
-  altText     String?
-  sortOrder   Int       @default(0)
-  isCover     Boolean   @default(false)
-  /// When false, public LifeOS media proxy will not stream bytes.
-  isPublic    Boolean   @default(true)
+  id         String   @id @default(cuid())
+  tenantId   String
+  offeringId String?
+  /// Public CDN URL or private:// scheme pointer for stored blobs.
+  url        String
+  kind       String   @default("image")
+  altText    String?
+  sortOrder  Int      @default(0)
+  isCover    Boolean  @default(false)
+  /// When false, only authenticated same-tenant staff (or signed URL) may resolve bytes.
+  isPublic   Boolean  @default(false)
+  /// Relative key under MEDIA_ROOT — when set, bytes are private (not world-readable by URL alone).
   storageKey  String?
   contentType String?
   byteSize    Int?
   checksum    String?
   deletedAt   DateTime?
-  createdAt   DateTime  @default(now())
+  createdAt  DateTime @default(now())
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   offering Offering? @relation(fields: [offeringId], references: [id], onDelete: Cascade)
@@ -1230,28 +1311,7 @@ model MediaAsset {
   @@index([tenantId])
   @@index([offeringId])
   @@index([tenantId, isPublic])
-}
-
-/// Business photo/video/post for LifeOS discovery. Media bytes stay in Drive / MediaAsset.
-model BusinessPublication {
-  id                String    @id @default(cuid())
-  tenantId          String
-  type              String
-  title             String    @default("")
-  caption           String    @default("")
-  status            String    @default("draft")
-  audience          String    @default("public")
-  relatedOfferingId String?
-  mediaAssetIds     Json
-  publishedAt       DateTime?
-  scheduledAt       DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId, status, publishedAt])
-  @@index([status, publishedAt])
+  @@index([tenantId, storageKey])
 }
 
 model PriceList {
@@ -1280,7 +1340,7 @@ model PricingRule {
   name         String
   code         String
   kind         String
-  amount       Float     @default(0)
+  amount Int           @default(0)
   percent      Float?
   currencyCode String    @default("USD")
   priority     Int       @default(100)
@@ -1322,7 +1382,7 @@ model Promotion {
   name       String
   code       String
   kind       String
-  amount     Float     @default(0)
+  amount Int         @default(0)
   percent    Float?
   stackable  Boolean   @default(false)
   startsAt   DateTime?
@@ -1367,7 +1427,7 @@ model Discount {
   offeringId String?
   name       String
   kind       String
-  amount     Float   @default(0)
+  amount Int       @default(0)
   percent    Float?
   status     String  @default("active")
   createdAt  DateTime @default(now())
@@ -1398,7 +1458,7 @@ model Addon {
   offeringId      String?
   addonOfferingId String?
   name            String
-  price           Float   @default(0)
+  price Int             @default(0)
   required        Boolean @default(false)
   maxQuantity     Int     @default(1)
   status          String  @default("active")
@@ -1522,6 +1582,7 @@ model CustomAttributeDef {
 model DiningArea {
   id          String   @id @default(cuid())
   tenantId    String
+  branchId    String?
   name        String
   code        String
   areaType    String   @default("indoor")
@@ -1537,6 +1598,7 @@ model DiningArea {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, branchId])
 }
 
 model DiningTable {
@@ -1633,7 +1695,7 @@ model MenuItem {
   name             String
   code             String
   description      String?
-  price            Float   @default(0)
+  price Int              @default(0)
   kitchenStationId String?
   courseHint       String?
   featured         Boolean @default(false)
@@ -1670,6 +1732,7 @@ model KitchenStation {
 model DiningReservation {
   id               String    @id @default(cuid())
   tenantId         String
+  branchId         String?
   diningAreaId     String?
   tableId          String?
   customerId       String?
@@ -1689,6 +1752,7 @@ model DiningReservation {
 
   @@unique([tenantId, confirmationCode])
   @@index([tenantId])
+  @@index([tenantId, branchId])
   @@index([status])
   @@index([seatingAt])
   @@index([bookingId])
@@ -1717,16 +1781,17 @@ model DiningSession {
 model DiningOrder {
   id            String    @id @default(cuid())
   tenantId      String
+  branchId      String?
   sessionId     String?
   reservationId String?
   customerId    String?
   orderType     String    @default("dine_in")
   status        String    @default("draft")
   notes         String?
-  subtotal      Float     @default(0)
-  serviceCharge Float     @default(0)
-  taxAmount     Float     @default(0)
-  total         Float     @default(0)
+  subtotal Int          @default(0)
+  serviceCharge Int     @default(0)
+  taxAmount Int         @default(0)
+  total Int             @default(0)
   billStatus    String    @default("open")
   splitCount    Int       @default(1)
   submittedAt   DateTime?
@@ -1740,6 +1805,7 @@ model DiningOrder {
   tickets KitchenTicket[]
 
   @@index([tenantId])
+  @@index([tenantId, branchId])
   @@index([status])
   @@index([orderType])
 }
@@ -1751,7 +1817,7 @@ model DiningOrderItem {
   menuItemId String?
   name       String
   quantity   Int     @default(1)
-  unitPrice  Float   @default(0)
+  unitPrice Int    @default(0)
   course     String?
   notes      String?
   status     String  @default("pending")
@@ -1825,7 +1891,7 @@ model ServiceChargeRule {
   tenantId    String
   name        String
   percent     Float   @default(0)
-  amount      Float   @default(0)
+  amount Int        @default(0)
   status      String  @default("active")
   createdAt   DateTime @default(now())
 
@@ -1837,6 +1903,8 @@ model ServiceChargeRule {
 model FitnessFacility {
   id          String   @id @default(cuid())
   tenantId    String
+  /// Branch scope — null = tenant-wide facility
+  branchId    String?
   name        String
   code        String
   description String?
@@ -1852,6 +1920,7 @@ model FitnessFacility {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, branchId])
 }
 
 model FitnessArea {
@@ -1882,7 +1951,7 @@ model MembershipPlan {
   code            String
   description     String?
   durationDays    Int      @default(30)
-  price           Float    @default(0)
+  price Int              @default(0)
   accessRules     Json
   includedClasses Json
   guestPrivileges Boolean  @default(false)
@@ -2268,7 +2337,7 @@ model Treatment {
   code                  String
   description           String?
   durationMinutes       Int      @default(60)
-  price                 Float    @default(0)
+  price Int                    @default(0)
   requiredRoomTypes     Json
   requiredSpecialties   Json
   imageUrls             Json
@@ -2296,7 +2365,7 @@ model TreatmentVariant {
   name            String
   code            String
   durationMinutes Int
-  price           Float   @default(0)
+  price Int             @default(0)
   status          String  @default("active")
 
   treatment    Treatment        @relation(fields: [treatmentId], references: [id], onDelete: Cascade)
@@ -2362,6 +2431,8 @@ model TherapistTreatmentLink {
 model SpaAppointment {
   id            String   @id @default(cuid())
   tenantId      String
+  /// Optional branch scope for multi-branch spa desks.
+  branchId      String?
   customerId    String
   treatmentId   String
   variantId     String?
@@ -2384,6 +2455,7 @@ model SpaAppointment {
   aftercare AftercareNote[]
 
   @@index([tenantId])
+  @@index([tenantId, branchId])
   @@index([customerId])
   @@index([startsAt])
   @@index([bookingId])
@@ -2500,7 +2572,7 @@ model SpaMembershipPlan {
   code         String
   description  String?
   durationDays Int      @default(30)
-  price        Float    @default(0)
+  price Int           @default(0)
   benefits     Json
   status       String   @default("active")
   createdAt    DateTime @default(now())
@@ -2538,7 +2610,7 @@ model SpaPackage {
   name        String
   code        String
   description String?
-  price       Float    @default(0)
+  price Int          @default(0)
   items       Json
   status      String   @default("active")
   createdAt   DateTime @default(now())
@@ -2631,6 +2703,7 @@ model EventOrganizer {
 model Event {
   id            String    @id @default(cuid())
   tenantId      String
+  branchId      String?
   venueId       String?
   eventTypeId   String?
   organizerId   String?
@@ -2667,6 +2740,7 @@ model Event {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, branchId])
   @@index([status])
   @@index([startsAt])
 }
@@ -2729,7 +2803,7 @@ model EventTicketType {
   name        String
   code        String
   description String?
-  price       Float     @default(0)
+  price Int           @default(0)
   capacity    Int       @default(100)
   soldCount   Int       @default(0)
   salesStart  DateTime?
@@ -2850,7 +2924,7 @@ model EventPackage {
   name        String
   code        String
   description String?
-  price       Float   @default(0)
+  price Int         @default(0)
   items       Json
   status      String  @default("active")
 
@@ -2869,7 +2943,7 @@ model EventAddon {
   name        String
   code        String
   description String?
-  price       Float   @default(0)
+  price Int         @default(0)
   status      String  @default("active")
 
   event Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
@@ -2937,6 +3011,7 @@ model EventWaitlist {
 model CinemaVenue {
   id          String   @id @default(cuid())
   tenantId    String
+  branchId    String?
   name        String
   code        String
   description String?
@@ -2956,6 +3031,7 @@ model CinemaVenue {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, branchId])
 }
 
 model CinemaScreen {
@@ -3105,7 +3181,7 @@ model CinemaTicketType {
   name        String
   code        String
   description String?
-  price       Float     @default(0)
+  price Int           @default(0)
   capacity    Int       @default(100)
   soldCount   Int       @default(0)
   salesStart  DateTime?
@@ -3242,7 +3318,7 @@ model CinemaConcession {
   code       String
   description String?
   category   String  @default("snack")
-  price      Float   @default(0)
+  price Int        @default(0)
   variants   Json
   modifiers  Json
   status     String  @default("active")
@@ -3265,7 +3341,7 @@ model CinemaConcessionOrder {
   customerId  String?
   status      String   @default("draft")
   notes       String?
-  totalAmount Float    @default(0)
+  totalAmount Int    @default(0)
   submittedAt DateTime?
   readyAt     DateTime?
   collectedAt DateTime?
@@ -3287,7 +3363,7 @@ model CinemaConcessionOrderItem {
   orderId       String
   concessionId  String
   quantity      Int    @default(1)
-  unitPrice     Float  @default(0)
+  unitPrice Int      @default(0)
   modifiers     Json
   notes         String?
 
@@ -3322,6 +3398,7 @@ model CinemaShift {
 model InventoryLocation {
   id          String   @id @default(cuid())
   tenantId    String
+  branchId    String?
   parentId    String?
   name        String
   code        String
@@ -3340,6 +3417,7 @@ model InventoryLocation {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, branchId])
   @@index([parentId])
 }
 
@@ -3572,7 +3650,7 @@ model InventorySupplierItem {
   supplierId  String
   itemId      String
   supplierSku String?
-  unitCost    Float  @default(0)
+  unitCost Int     @default(0)
   status      String @default("active")
 
   supplier InventorySupplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
@@ -3610,7 +3688,7 @@ model PurchaseRequestItem {
   requestId String
   itemId    String
   quantity  Float
-  unitCost  Float  @default(0)
+  unitCost Int   @default(0)
   notes     String?
 
   request PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
@@ -4452,30 +4530,40 @@ model PaymentMethod {
 }
 
 model Payment {
-  id              String    @id @default(cuid())
-  tenantId        String
-  customerId      String?
-  invoiceId       String?
-  intentId        String?
-  paymentMethodId String?
-  amount          Int
-  currency        String
-  provider        String    @default("mock")
-  providerRef     String?
-  status          String    @default("pending")
-  methodType      String    @default("card")
-  staffId         String?
-  capturedAmount  Int       @default(0)
-  refundedAmount  Int       @default(0)
-  providerFee     Int       @default(0)
-  netAmount       Int       @default(0)
-  idempotencyKey  String?
-  metadata        Json
-  authorizedAt    DateTime?
-  capturedAt      DateTime?
-  cancelledAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  tenantId           String
+  customerId         String?
+  invoiceId          String?
+  intentId           String?
+  paymentMethodId    String?
+  amount             Int
+  currency           String
+  provider           String    @default("mock")
+  providerRef        String?
+  status             String    @default("pending")
+  methodType         String    @default("card")
+  staffId            String?
+  /// Branch where the payment was collected / attributed.
+  branchId           String?
+  /// Staff who physically collected the money (defaults to acting staff).
+  collectedByStaffId String?
+  verifiedByStaffId  String?
+  verifiedAt         DateTime?
+  externalReference  String?
+  notes              String?
+  correlationId      String?
+  capturedAmount     Int       @default(0)
+  refundedAmount     Int       @default(0)
+  providerFee        Int       @default(0)
+  netAmount          Int       @default(0)
+  idempotencyKey     String?
+  metadata           Json
+  authorizedAt       DateTime?
+  capturedAt         DateTime?
+  collectedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   invoice       Invoice?       @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   intent        PaymentIntent? @relation(fields: [intentId], references: [id], onDelete: SetNull)
@@ -4488,6 +4576,10 @@ model Payment {
   @@index([tenantId])
   @@index([invoiceId])
   @@index([status])
+  @@index([tenantId, branchId])
+  @@index([tenantId, collectedByStaffId])
+  @@index([tenantId, methodType])
+  @@index([correlationId])
 }
 
 model Refund {
@@ -4656,4 +4748,47 @@ model PaymentLink {
 
   @@index([tenantId])
   @@index([invoiceId])
+}
+
+/// In-process background job queue (Wave D). tenantId "platform" = cross-tenant/system.
+model BackgroundJob {
+  id             String    @id @default(cuid())
+  tenantId       String
+  type           String
+  payload        Json
+  idempotencyKey String
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  runAt          DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([tenantId, type, idempotencyKey])
+  @@index([status, runAt])
+  @@index([tenantId])
+}
+
+model BusinessPublication {
+  id                String    @id @default(cuid())
+  tenantId          String
+  type              String
+  title             String    @default("")
+  caption           String    @default("")
+  status            String    @default("draft")
+  audience          String    @default("public")
+  relatedOfferingId String?
+  mediaAssetIds     Json
+  publishedAt       DateTime?
+  scheduledAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, publishedAt])
+  @@index([status, publishedAt])
 }

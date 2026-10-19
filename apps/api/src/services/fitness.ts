@@ -8,6 +8,7 @@ import {
   ensureDefaultCategories,
 } from "./booking-engine.js";
 import { createOffering, ensureDefaultCatalog } from "./commerce-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
@@ -164,6 +165,17 @@ export async function createMembership(opts: {
     resource: "membership",
     resourceId: membership.id,
     metadata: { status: membership.status },
+  });
+
+  await tryEnsureLifecycleInvoice({
+    vertical: "fitness",
+    tenantId: opts.tenantId,
+    customerId: opts.customerId,
+    sourceEntityId: membership.id,
+    description: `Membership · ${plan.name}`,
+    unitAmountMinor: plan.price,
+    actorKind: opts.actorKind,
+    actorId: opts.actorId,
   });
 
   return membership;
@@ -529,7 +541,7 @@ export async function bookPersonalTraining(opts: {
     kind: "service",
     name: `PT with ${trainer.displayName}`,
     code: `PT-${Date.now().toString(36)}`,
-    basePrice: 60,
+    basePrice: 6000,
     status: "active",
     visibility: "public",
     moduleId: "gym_membership",
@@ -684,7 +696,7 @@ export async function createAccessPass(opts: {
     kind: "product",
     name: `${opts.kind.replace(/_/g, " ")}`,
     code: `PASS-${Date.now().toString(36)}`,
-    basePrice: opts.kind === "day_pass" ? 25 : 15,
+    basePrice: opts.kind === "day_pass" ? 2500 : 1500,
     status: "active",
     visibility: "public",
     moduleId: "gym_membership",

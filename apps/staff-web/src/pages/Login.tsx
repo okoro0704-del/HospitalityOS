@@ -14,9 +14,28 @@ export function LoginPage() {
 
   useEffect(() => {
     if (getSession()) navigate("/", { replace: true });
-    fetch(`${API}/platform/tenants`)
+    fetch(`${API}/public/demo/venues`)
       .then((r) => r.json())
-      .then((data: { tenants: TenantPublic[] }) => setTenants(data.tenants))
+      .then((data: { venues: Array<{ slug: string; name: string }> }) => {
+        setTenants(
+          data.venues.map((v) => ({
+            id: v.slug,
+            slug: v.slug,
+            name: v.name,
+            businessType: "hotel",
+            status: "active" as const,
+            branding: {
+              primaryColor: "#0F766E",
+              secondaryColor: "#134E4A",
+              accentColor: "#F59E0B",
+              theme: "light" as const,
+            },
+            contact: {},
+            operatingHours: [],
+            enabledModules: [],
+          })),
+        );
+      })
       .catch(() => undefined);
   }, [navigate]);
 
@@ -40,8 +59,9 @@ export function LoginPage() {
         <p className="brand">HospitalityOS</p>
         <h1>Staff Web</h1>
         <p className="muted">
-          Operations console for hospitality and leisure venues. Future login will
-          integrate with the LifeOS Business Portal.
+          Preferred sign-in is TrustID. Password login below is{" "}
+          <strong>legacy / development authentication</strong> and cannot bypass
+          tenant roles or permissions.
         </p>
         <form onSubmit={onSubmit} className="login-form">
           <label>
@@ -77,7 +97,9 @@ export function LoginPage() {
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        <p className="muted small">Demo password for seeded staff: password123</p>
+        <p className="muted small">
+          Demo password for seeded staff: password123 · Prefer TrustID when linked
+        </p>
       </div>
     </div>
   );

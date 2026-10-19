@@ -7,6 +7,7 @@ import {
   ensureDefaultCategories,
 } from "./booking-engine.js";
 import { createOffering, ensureDefaultCatalog } from "./commerce-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
@@ -369,6 +370,19 @@ export async function bookEventTicket(opts: {
       resourceId: ticket.id,
       metadata: { eventId: event.id, ticketTypeId: ticketType.id, seatId },
     });
+
+    if (opts.customerId && ticketType.price > 0) {
+      await tryEnsureLifecycleInvoice({
+        vertical: "events",
+        tenantId: opts.tenantId,
+        customerId: opts.customerId,
+        sourceEntityId: ticket.id,
+        description: `Event ticket · ${event.name} · ${ticketType.name}`,
+        unitAmountMinor: ticketType.price,
+        actorKind: opts.actorKind,
+        actorId: opts.actorId,
+      });
+    }
 
     return ticket;
   } catch (err) {

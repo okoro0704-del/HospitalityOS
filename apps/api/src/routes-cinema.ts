@@ -15,6 +15,10 @@ import {
   type StaffAuth,
   type GuestAuth,
 } from "./lib/auth.js";
+import {
+  branchIdFilter,
+  canAccessBranch,
+} from "./lib/branch-scope.js";
 import { requireCinemaModule } from "./lib/module-gate.js";
 import {
   bookCinemaTicket,
@@ -34,15 +38,16 @@ import {
   updateConcessionOrderStatus,
 } from "./services/cinema.js";
 
-function mapErr(err: unknown) {
+function mapErr(err: unknown, requestId?: string) {
   const e = err as { statusCode?: number; code?: string; message?: string; waitlistId?: string };
   const status = e.statusCode ?? 500;
   return {
     status,
     body: {
       error: e.code ?? "internal_error",
-      message: e.message ?? "Unexpected error",
+      message: status >= 500 ? "Internal server error" : (e.message ?? "Unexpected error"),
       ...(e.waitlistId ? { waitlistId: e.waitlistId } : {}),
+      ...(requestId ? { requestId } : {}),
     },
   };
 }
@@ -125,8 +130,13 @@ export async function registerCinemaRoutes(app: FastifyInstance) {
   });
 
   app.get("/cinema/venues", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const venues = await prisma.cinemaVenue.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { screens: true },
       orderBy: { name: "asc" },
     });
@@ -140,14 +150,19 @@ export async function registerCinemaRoutes(app: FastifyInstance) {
         code: z.string().min(1),
         description: z.string().optional(),
         location: z.string().optional(),
+        branchId: z.string().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     try {
       const venue = await createCinemaVenue({
         tenantId: req.tenantId!,
         ...body,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return reply.code(201).send({ venue });
     } catch (err) {
@@ -182,8 +197,13 @@ export async function registerCinemaRoutes(app: FastifyInstance) {
   });
 
   app.get("/cinema/screens", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const screens = await prisma.cinemaScreen.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { venue: { branchId: branchFilter } } : {}),
+      },
       include: { venue: true, seatMap: { include: { sections: { include: { seats: true } } } } },
       orderBy: { name: "asc" },
     });
@@ -266,8 +286,13 @@ export async function registerCinemaRoutes(app: FastifyInstance) {
   });
 
   app.get("/cinema/showtimes", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const showtimes = await prisma.cinemaShowtime.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { screen: { venue: { branchId: branchFilter } } } : {}),
+      },
       include: {
         content: true,
         screen: true,
@@ -364,8 +389,15 @@ export async function registerCinemaRoutes(app: FastifyInstance) {
   });
 
   app.get("/cinema/tickets", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const tickets = await prisma.cinemaTicket.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter
+          ? { showtime: { screen: { venue: { branchId: branchFilter } } } }
+          : {}),
+      },
       include: { ticketType: true, seat: true, attendee: true, showtime: { include: { content: true } } },
       orderBy: { bookedAt: "desc" },
       take: 200,

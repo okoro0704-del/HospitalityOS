@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import type { DiningOrderStatus, TableStatus } from "@hospitalityos/shared";
+import { getMessagingProvider, type DiningOrderStatus, type TableStatus } from "@hospitalityos/shared";
 import { prisma } from "../db.js";
 import { writeAudit } from "../lib/audit.js";
 import { createNotification } from "../lib/notifications.js";
@@ -12,6 +12,10 @@ import {
   updateBooking,
 } from "./booking-engine.js";
 import { createOffering, ensureDefaultCatalog } from "./commerce-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
+
+/** Domain messaging access — infrastructure only via IMessagingProvider. */
+export { getMessagingProvider };
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
@@ -80,12 +84,14 @@ export async function createDiningArea(opts: {
   code: string;
   areaType?: string;
   description?: string | null;
+  branchId?: string | null;
   actorKind: string;
   actorId?: string | null;
 }) {
   const area = await prisma.diningArea.create({
     data: {
       tenantId: opts.tenantId,
+      branchId: opts.branchId ?? null,
       name: opts.name,
       code: opts.code,
       areaType: opts.areaType ?? "indoor",
@@ -280,6 +286,7 @@ export async function createDiningReservation(opts: {
   diningAreaId?: string | null;
   tableId?: string | null;
   customerId?: string | null;
+  branchId?: string | null;
   partySize: number;
   seatingAt: Date;
   endsAt?: Date | null;
@@ -374,9 +381,21 @@ export async function createDiningReservation(opts: {
     });
   }
 
+  let branchId = opts.branchId ?? null;
+  if (!branchId) {
+    const areaId = opts.diningAreaId ?? table?.diningAreaId ?? null;
+    if (areaId) {
+      const area = await prisma.diningArea.findFirst({
+        where: { id: areaId, tenantId: opts.tenantId },
+      });
+      branchId = area?.branchId ?? null;
+    }
+  }
+
   const reservation = await prisma.diningReservation.create({
     data: {
       tenantId: opts.tenantId,
+      branchId,
       diningAreaId: opts.diningAreaId ?? table?.diningAreaId ?? null,
       tableId: table?.id ?? null,
       customerId: opts.customerId ?? null,
@@ -671,6 +690,7 @@ export async function createOrder(opts: {
   sessionId?: string | null;
   reservationId?: string | null;
   customerId?: string | null;
+  branchId?: string | null;
   orderType?: string;
   notes?: string | null;
   items: Array<{
@@ -693,16 +713,19 @@ export async function createOrder(opts: {
   const charge = await prisma.serviceChargeRule.findFirst({
     where: { tenantId: opts.tenantId, status: "active" },
   });
-  const serviceCharge = charge
-    ? charge.percent > 0
-      ? subtotal * (charge.percent / 100)
-      : charge.amount
-    : 0;
+  const serviceCharge = Math.round(
+    charge
+      ? charge.percent > 0
+        ? subtotal * (charge.percent / 100)
+        : charge.amount
+      : 0,
+  );
   const total = subtotal + serviceCharge;
 
   const order = await prisma.diningOrder.create({
     data: {
       tenantId: opts.tenantId,
+      branchId: opts.branchId ?? null,
       sessionId: opts.sessionId ?? null,
       reservationId: opts.reservationId ?? null,
       customerId: opts.customerId ?? null,
@@ -853,6 +876,129 @@ export async function transitionOrder(opts: {
     resource: "dining_order",
     resourceId: existing.id,
     metadata: { status: opts.status },
+  });
+
+  if (opts.status === "completed" && existing.customerId && existing.total > 0) {
+    await tryEnsureLifecycleInvoice({
+      vertical: "dining",
+      tenantId: opts.tenantId,
+      customerId: existing.customerId,
+      sourceEntityId: existing.id,
+      description: `Dining order ${existing.id.slice(0, 8)} · ${existing.orderType}`,
+      unitAmountMinor: existing.total,
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
+    });
+  }
+
+  return updated;
+}
+
+export const POS_SETTLEMENT_METHODS = ["fundzman", "cash", "card", "charge_to_room"] as const;
+export type PosSettlementMethod = (typeof POS_SETTLEMENT_METHODS)[number];
+
+function tenantPosSettings(settings: unknown): {
+  folioChargeEnabled: boolean;
+  posSettlementMethods: string[];
+} {
+  const raw =
+    settings && typeof settings === "object" && !Array.isArray(settings)
+      ? (settings as Record<string, unknown>)
+      : {};
+  const methods = Array.isArray(raw.posSettlementMethods)
+    ? raw.posSettlementMethods.filter((m): m is string => typeof m === "string")
+    : ["fundzman", "cash", "card"];
+  return {
+    folioChargeEnabled: Boolean(raw.folioChargeEnabled),
+    posSettlementMethods: methods,
+  };
+}
+
+/**
+ * Settle a dining/bar POS order. Charge-to-room is only accepted when the tenant
+ * has accommodation plus a POS vertical (folioChargeEnabled).
+ */
+export async function settleDiningOrder(opts: {
+  tenantId: string;
+  orderId: string;
+  method: PosSettlementMethod;
+  reservationId?: string | null;
+  actorKind: string;
+  actorId?: string | null;
+}) {
+  const tenant = await prisma.tenant.findUnique({ where: { id: opts.tenantId } });
+  if (!tenant) throw httpError("Tenant not found", "not_found", 404);
+  const pos = tenantPosSettings(tenant.settings);
+
+  if (!pos.posSettlementMethods.includes(opts.method)) {
+    throw httpError(
+      opts.method === "charge_to_room"
+        ? "Charge to room folio is not enabled for this property"
+        : `Settlement method ${opts.method} is not available`,
+      "settlement_not_allowed",
+      400,
+    );
+  }
+
+  const order = await prisma.diningOrder.findFirst({
+    where: { id: opts.orderId, tenantId: opts.tenantId },
+  });
+  if (!order) throw httpError("Order not found", "not_found", 404);
+  if (order.billStatus === "paid" || order.billStatus === "charged_to_room") {
+    throw httpError("Order is already settled", "already_settled", 409);
+  }
+
+  if (opts.method === "charge_to_room") {
+    if (!pos.folioChargeEnabled) {
+      throw httpError(
+        "Charge to room folio requires accommodation plus dining, bar, or gym/spa",
+        "folio_disabled",
+        400,
+      );
+    }
+    if (!opts.reservationId) {
+      throw httpError("Room reservation is required to charge the folio", "validation_error", 400);
+    }
+    const reservation = await prisma.accommodationReservation.findFirst({
+      where: { id: opts.reservationId, tenantId: opts.tenantId },
+    });
+    if (!reservation) throw httpError("Reservation not found", "not_found", 404);
+
+    await prisma.reservationTimeline.create({
+      data: {
+        tenantId: opts.tenantId,
+        reservationId: reservation.id,
+        eventType: "folio_charge",
+        message: `POS order ${order.id.slice(0, 8)} charged to room folio`,
+        actorKind: opts.actorKind,
+        actorId: opts.actorId ?? null,
+        metadata: {
+          orderId: order.id,
+          amount: order.total,
+          method: opts.method,
+        },
+      },
+    });
+  }
+
+  const updated = await prisma.diningOrder.update({
+    where: { id: order.id },
+    data: {
+      billStatus: opts.method === "charge_to_room" ? "charged_to_room" : "paid",
+      completedAt: order.completedAt ?? new Date(),
+      status: order.status === "draft" ? order.status : order.status,
+    },
+    include: { items: true },
+  });
+
+  await writeAudit({
+    tenantId: opts.tenantId,
+    actorKind: opts.actorKind,
+    actorId: opts.actorId,
+    action: "dining_order.settled",
+    resource: "dining_order",
+    resourceId: order.id,
+    metadata: { method: opts.method, reservationId: opts.reservationId ?? null },
   });
 
   return updated;

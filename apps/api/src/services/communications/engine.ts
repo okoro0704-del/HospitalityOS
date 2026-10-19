@@ -1,11 +1,50 @@
 import type { Prisma } from "@prisma/client";
+import {
+  getMessagingProvider,
+  type SendMessagePayload,
+  type SendMessageResult,
+} from "@hospitalityos/shared";
 import { prisma } from "../../db.js";
 import { writeAudit } from "../../lib/audit.js";
 import { buildIdempotencyKey, renderTemplate } from "./templates.js";
-import { getProvider } from "./providers.js";
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
+}
+
+/** Map legacy engine channel strings onto the Messaging primitive contract. */
+function toMessagingChannel(channel: string): SendMessagePayload["channel"] | null {
+  switch (channel) {
+    case "email":
+      return "EMAIL";
+    case "sms":
+      return "SMS";
+    case "whatsapp":
+      return "WHATSAPP";
+    case "in_app":
+      return "IN_APP";
+    case "push":
+      return "SYSTEM";
+    default:
+      return null;
+  }
+}
+
+function sendResultToLegacy(result: SendMessageResult): {
+  ok: boolean;
+  provider: string;
+  status: "sent" | "delivered" | "failed" | "skipped";
+  externalId?: string;
+  error?: string;
+} {
+  const ok = result.status !== "FAILED";
+  return {
+    ok,
+    provider: "messaging",
+    status: result.status === "FAILED" ? "failed" : result.status === "QUEUED" ? "skipped" : "sent",
+    externalId: result.messageId,
+    error: result.status === "FAILED" ? "send_failed" : undefined,
+  };
 }
 
 export type CommunicationEventInput = {
@@ -302,8 +341,8 @@ async function deliverChannel(opts: {
     }
   }
 
-  const provider = getProvider(opts.channel);
-  if (!provider) {
+  const messagingChannel = toMessagingChannel(opts.channel);
+  if (!messagingChannel) {
     const failed = await prisma.notificationDelivery.create({
       data: {
         tenantId: opts.tenantId,
@@ -330,7 +369,7 @@ async function deliverChannel(opts: {
         eventId: opts.eventId,
         channel: opts.channel,
         status: "processing",
-        provider: provider.channel === "in_app" ? "in_app" : `${opts.channel}_mock`,
+        provider: opts.channel === "in_app" ? "in_app" : `${opts.channel}_mock`,
         attemptCount: 1,
         idempotencyKey: opts.idempotencyKey,
         payload: { to: opts.to, subject: opts.subject },
@@ -350,16 +389,22 @@ async function deliverChannel(opts: {
   }
 
   try {
-    const result = await provider.send({
-      tenantId: opts.tenantId,
-      to: opts.to,
-      subject: opts.subject,
+    const raw = await getMessagingProvider().sendMessage({
+      recipientId: opts.to,
+      channel: messagingChannel,
       body: opts.body,
+      metadata: {
+        tenantId: opts.tenantId,
+        subject: opts.subject ?? undefined,
+        idempotencyKey: opts.idempotencyKey,
+      },
     });
+    const result = sendResultToLegacy(raw);
     delivery = await prisma.notificationDelivery.update({
       where: { id: delivery.id },
       data: {
         status: result.status === "delivered" ? "delivered" : result.ok ? "sent" : "failed",
+        provider: result.provider,
         lastError: result.error ?? null,
         sentAt: result.ok ? new Date() : null,
         deliveredAt: result.status === "delivered" ? new Date() : null,
@@ -720,16 +765,21 @@ export async function retryDelivery(opts: {
     throw httpError("Max retry attempts reached", "max_retries", 400);
   }
 
-  const provider = getProvider(delivery.channel);
-  if (!provider) throw httpError("Provider unavailable", "provider_unavailable", 400);
+  const messagingChannel = toMessagingChannel(delivery.channel);
+  if (!messagingChannel) throw httpError("Provider unavailable", "provider_unavailable", 400);
 
   const payload = (delivery.payload ?? {}) as { to?: string; subject?: string; body?: string };
-  const result = await provider.send({
-    tenantId: opts.tenantId,
-    to: payload.to ?? "",
-    subject: payload.subject,
-    body: payload.body ?? "",
-  });
+  const result = sendResultToLegacy(
+    await getMessagingProvider().sendMessage({
+      recipientId: payload.to ?? "",
+      channel: messagingChannel,
+      body: payload.body ?? "",
+      metadata: {
+        tenantId: opts.tenantId,
+        subject: payload.subject,
+      },
+    }),
+  );
 
   const updated = await prisma.notificationDelivery.update({
     where: { id: delivery.id },

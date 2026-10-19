@@ -25,6 +25,8 @@ export type GuestSessionState = {
   experienceId: string;
   scopes: string[];
   expiresAt: string;
+  authProvider?: string;
+  trustId?: string | null;
 };
 
 function apiUrl() {

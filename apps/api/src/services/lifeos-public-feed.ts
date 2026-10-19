@@ -44,7 +44,7 @@ const PUBLIC_OFFERING_STATUSES = ["active", "featured", "published"] as const;
 function publicApiBase(): string {
   const fromEnv = (process.env.PUBLIC_API_BASE_URL ?? "").trim().replace(/\/$/, "");
   if (fromEnv) return fromEnv;
-  if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+  if (config.env === "production") {
     return "https://hospitalityos-api-production.up.railway.app";
   }
   return `http://127.0.0.1:${config.port}`;
@@ -397,16 +397,10 @@ export async function streamPublicMediaAsset(assetId: string): Promise<{
     }
   }
 
-  // Private blob path (optional local MEDIA_ROOT) — no world-readable URL.
   if (asset.storageKey) {
     try {
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      const root = process.env.MEDIA_ROOT ?? "./media-private";
-      const full = path.resolve(root, asset.storageKey);
-      const rootResolved = path.resolve(root);
-      if (!full.startsWith(rootResolved)) return null;
-      const bytes = await fs.readFile(full);
+      const { readPrivateObject } = await import("./media-storage.js");
+      const bytes = await readPrivateObject(asset.tenantId, asset.storageKey);
       return {
         body: new Uint8Array(bytes),
         contentType: asset.contentType || "application/octet-stream",
@@ -416,7 +410,21 @@ export async function streamPublicMediaAsset(assetId: string): Promise<{
     }
   }
 
-  return null;
+  try {
+    const { getLifeOsStorageProvider } = await import("./lifeos/container.js");
+    const storage = getLifeOsStorageProvider();
+    const got = await storage.get({
+      namespace: asset.tenantId,
+      key: asset.id,
+    });
+    if (!got) return null;
+    return {
+      body: got.body,
+      contentType: got.contentType || asset.contentType || "application/octet-stream",
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function createBusinessPublication(input: {

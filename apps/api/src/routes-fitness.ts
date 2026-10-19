@@ -14,6 +14,7 @@ import {
   type GuestAuth,
 } from "./lib/auth.js";
 import { requireGymModule } from "./lib/module-gate.js";
+import { assertBranchAccess, branchIdFilter } from "./lib/branch-scope.js";
 import { prisma } from "./db.js";
 import { writeAudit } from "./lib/audit.js";
 import {
@@ -88,25 +89,34 @@ export async function registerFitnessRoutes(app: FastifyInstance) {
 
   // Facilities & areas
   app.get("/fitness/facilities", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const facilities = await prisma.fitnessFacility.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { areas: true },
       orderBy: { name: "asc" },
     });
     return { facilities };
   });
 
-  app.post("/fitness/facilities", { preHandler: staffAdmin }, async (req) => {
+  app.post("/fitness/facilities", { preHandler: staffAdmin }, async (req, reply) => {
+    const auth = req.auth as StaffAuth;
     const body = z
       .object({
         name: z.string().min(1),
         code: z.string().min(1),
         description: z.string().optional(),
+        branchId: z.string().optional().nullable(),
       })
       .parse(req.body);
+    if (body.branchId && assertBranchAccess(auth, body.branchId, reply)) return;
     const facility = await prisma.fitnessFacility.create({
       data: {
         tenantId: req.tenantId!,
+        branchId: body.branchId ?? null,
         name: body.name,
         code: body.code,
         description: body.description,
@@ -117,7 +127,7 @@ export async function registerFitnessRoutes(app: FastifyInstance) {
     await writeAudit({
       tenantId: req.tenantId!,
       actorKind: "staff",
-      actorId: (req.auth as StaffAuth).staffId,
+      actorId: auth.staffId,
       action: "fitness_facility.created",
       resource: "fitness_facility",
       resourceId: facility.id,
@@ -156,8 +166,20 @@ export async function registerFitnessRoutes(app: FastifyInstance) {
 
   // Plans
   app.get("/fitness/plans", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const plans = await prisma.membershipPlan.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter
+          ? {
+              OR: [
+                { facilityId: null },
+                { facility: { branchId: branchFilter } },
+              ],
+            }
+          : {}),
+      },
       include: { benefits: true },
       orderBy: { name: "asc" },
     });
@@ -255,8 +277,20 @@ export async function registerFitnessRoutes(app: FastifyInstance) {
 
   // Classes
   app.get("/fitness/classes", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const classes = await prisma.fitnessClass.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter
+          ? {
+              OR: [
+                { facilityId: null },
+                { facility: { branchId: branchFilter } },
+              ],
+            }
+          : {}),
+      },
       include: { classType: true, trainers: { include: { trainer: true } } },
       orderBy: { name: "asc" },
     });

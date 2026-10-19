@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiGet, apiSend } from "../lib/api";
 
 function money(minor: number, currency: string) {
@@ -26,6 +26,12 @@ export function BillingDashboardPage() {
           </Link>
           <Link className="btn ghost" to="/billing/payments">
             Payments
+          </Link>
+          <Link className="btn ghost" to="/billing/collections">
+            Collections
+          </Link>
+          <Link className="btn ghost" to="/billing/reconciliation">
+            Reconciliation
           </Link>
           <Link className="btn ghost" to="/billing/refunds">
             Refunds
@@ -73,6 +79,8 @@ export function BillingDashboardPage() {
 }
 
 export function BillingInvoicesPage() {
+  const [search] = useSearchParams();
+  const focusId = search.get("focus");
   const [invoices, setInvoices] = useState<
     Array<{
       id: string;
@@ -80,6 +88,7 @@ export function BillingInvoicesPage() {
       status: string;
       total: number;
       amountDue: number;
+      amountPaid?: number;
       currency: string;
       customerId: string;
     }>
@@ -126,10 +135,21 @@ export function BillingInvoicesPage() {
     await load();
   }
 
+  async function collectManual(invoiceId: string, amountDue: number, methodType: string) {
+    await apiSend("/billing/payments/manual/collect", "POST", {
+      invoiceId,
+      amount: amountDue,
+      methodType,
+      idempotencyKey: `man_${methodType}_${invoiceId}_${Date.now()}`,
+    });
+    await load();
+  }
+
   return (
     <section className="page">
       <Link to="/billing">← Billing</Link>
       <h2>Invoices</h2>
+      {focusId && <p className="ok">Focused invoice from Today: {focusId}</p>}
       {error && <p className="error">{error}</p>}
       <form className="card-form" onSubmit={onCreate}>
         <select name="customerId" required defaultValue="">
@@ -155,17 +175,40 @@ export function BillingInvoicesPage() {
       </form>
       <ul className="list">
         {invoices.map((inv) => (
-          <li key={inv.id}>
-            <strong>{inv.number}</strong> · {inv.status} · {money(inv.total, inv.currency)} · due{" "}
-            {money(inv.amountDue, inv.currency)}
+          <li key={inv.id} style={focusId === inv.id ? { outline: "2px solid currentColor" } : undefined}>
+            <strong>{inv.number}</strong> · {inv.status} · {money(inv.total, inv.currency)} · paid{" "}
+            {money(inv.amountPaid ?? 0, inv.currency)} · due {money(inv.amountDue, inv.currency)}
             {inv.amountDue > 0 && (
-              <button
-                type="button"
-                className="btn ghost"
-                onClick={() => payCash(inv.id, inv.amountDue)}
-              >
-                Record cash
-              </button>
+              <span className="actions">
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => payCash(inv.id, inv.amountDue)}
+                >
+                  Cash
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => collectManual(inv.id, inv.amountDue, "pay_to_staff")}
+                >
+                  Pay to staff
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => collectManual(inv.id, inv.amountDue, "bank_transfer_manual")}
+                >
+                  Bank transfer
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => collectManual(inv.id, inv.amountDue, "card_manual")}
+                >
+                  Card (manual)
+                </button>
+              </span>
             )}
           </li>
         ))}
@@ -175,23 +218,198 @@ export function BillingInvoicesPage() {
 }
 
 export function BillingPaymentsPage() {
+  const [search] = useSearchParams();
+  const focusId = search.get("focus");
   const [payments, setPayments] = useState<
-    Array<{ id: string; amount: number; currency: string; status: string; methodType: string }>
+    Array<{
+      id: string;
+      amount: number;
+      currency: string;
+      status: string;
+      methodType: string;
+      externalReference?: string | null;
+    }>
   >([]);
-  useEffect(() => {
+  function load() {
     apiGet<{ payments: typeof payments }>("/billing/payments").then((d) => setPayments(d.payments));
+  }
+  useEffect(() => {
+    load();
   }, []);
+
+  async function verify(id: string) {
+    await apiSend(`/billing/payments/${id}/verify`, "POST", {});
+    await load();
+  }
+
   return (
     <section className="page">
       <Link to="/billing">← Billing</Link>
       <h2>Payments</h2>
+      {focusId && <p className="ok">Focused payment from Today: {focusId}</p>}
       <ul className="list">
         {payments.map((p) => (
-          <li key={p.id}>
+          <li key={p.id} style={focusId === p.id ? { outline: "2px solid currentColor" } : undefined}>
             {money(p.amount, p.currency)} · {p.status} · {p.methodType}
+            {p.externalReference ? ` · ref ${p.externalReference}` : ""}
+            {p.status === "pending_verification" && (
+              <button type="button" className="btn ghost" onClick={() => verify(p.id)}>
+                Verify
+              </button>
+            )}
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+export function BillingCollectionsPage() {
+  const [summary, setSummary] = useState<{
+    day: string;
+    grandTotal: number;
+    collectors: Array<{
+      displayName: string;
+      total: number;
+      methods: Array<{ methodType: string; amount: number; count: number }>;
+    }>;
+  } | null>(null);
+  useEffect(() => {
+    apiGet<{ summary: NonNullable<typeof summary> }>("/billing/collections/today").then((d) =>
+      setSummary(d.summary),
+    );
+  }, []);
+  return (
+    <section className="page">
+      <Link to="/billing">← Billing</Link>
+      <h2>Today&apos;s collections</h2>
+      <p className="muted">Operational staff collection summary — not payroll.</p>
+      {summary && (
+        <>
+          <p>
+            <strong>{summary.day}</strong> · total {summary.grandTotal} (minor units)
+          </p>
+          <ul className="list">
+            {summary.collectors.map((c) => (
+              <li key={c.displayName}>
+                <strong>{c.displayName}</strong> · {c.total}
+                <ul>
+                  {c.methods.map((m) => (
+                    <li key={m.methodType}>
+                      {m.methodType.replaceAll("_", " ")} — {m.amount} ({m.count})
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+export function BillingReconciliationPage() {
+  const [rec, setRec] = useState<{
+    day: string;
+    openingCash: number;
+    cashCollected: number;
+    manualPayments: number;
+    refunds: number;
+    expectedTotal: number;
+    recordedTotal: number;
+    countedTotal?: number;
+    difference: number;
+  } | null>(null);
+  const [opening, setOpening] = useState("0");
+  const [counted, setCounted] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  function load(openingCash = opening, countedTotal = counted) {
+    const q = new URLSearchParams({ openingCash });
+    if (countedTotal !== "") q.set("countedTotal", countedTotal);
+    apiGet<{ reconciliation: NonNullable<typeof rec> }>(
+      `/billing/reconciliation/daily?${q.toString()}`,
+    ).then((d) => setRec(d.reconciliation));
+  }
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function closePeriod() {
+    setMessage(null);
+    const countedTotal = counted !== "" ? Number(counted) : (rec?.expectedTotal ?? 0);
+    const res = await apiSend<{ alreadyClosed?: boolean }>(
+      "/billing/reconciliation/close",
+      "POST",
+      {
+        openingCash: Number(opening) || 0,
+        countedTotal,
+      },
+    );
+    setMessage(res.alreadyClosed ? "Period already closed." : "Period closed.");
+    load(opening, String(countedTotal));
+  }
+
+  return (
+    <section className="page">
+      <Link to="/billing">← Billing</Link>
+      <h2>Daily reconciliation</h2>
+      <p className="muted">Operational cash / manual payment reconciliation — not full accounting.</p>
+      <label>
+        Opening cash (minor)
+        <input value={opening} onChange={(e) => setOpening(e.target.value)} />
+      </label>
+      <label>
+        Counted total (minor)
+        <input value={counted} onChange={(e) => setCounted(e.target.value)} placeholder="optional" />
+      </label>
+      <button type="button" className="btn" onClick={() => load(opening, counted)}>
+        Refresh
+      </button>
+      <button type="button" className="btn ghost" onClick={() => closePeriod()}>
+        Close period
+      </button>
+      {message && <p className="ok">{message}</p>}
+      {rec && (
+        <dl className="profile-dl">
+          <div>
+            <dt>Day</dt>
+            <dd>{rec.day}</dd>
+          </div>
+          <div>
+            <dt>Opening cash</dt>
+            <dd>{rec.openingCash}</dd>
+          </div>
+          <div>
+            <dt>Cash collected</dt>
+            <dd>{rec.cashCollected}</dd>
+          </div>
+          <div>
+            <dt>Other manual payments</dt>
+            <dd>{rec.manualPayments}</dd>
+          </div>
+          <div>
+            <dt>Refunds</dt>
+            <dd>{rec.refunds}</dd>
+          </div>
+          <div>
+            <dt>Recorded total</dt>
+            <dd>{rec.recordedTotal}</dd>
+          </div>
+          <div>
+            <dt>Expected total</dt>
+            <dd>{rec.expectedTotal}</dd>
+          </div>
+          <div>
+            <dt>Counted total</dt>
+            <dd>{rec.countedTotal ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>Difference</dt>
+            <dd>{rec.difference}</dd>
+          </div>
+        </dl>
+      )}
     </section>
   );
 }

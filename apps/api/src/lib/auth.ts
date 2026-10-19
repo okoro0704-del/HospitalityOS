@@ -1,7 +1,12 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { StaffRole } from "@hospitalityos/shared";
+import {
+  normalizeStaffRole,
+  permissionsForRole,
+  type Permission,
+  type StaffRole,
+} from "@hospitalityos/shared";
 import { prisma } from "../db.js";
-import { hashToken } from "./crypto.js";
+import { hashToken, parseJsonArray } from "./crypto.js";
 
 export type GuestAuth = {
   kind: "guest";
@@ -11,6 +16,8 @@ export type GuestAuth = {
   displayName: string;
   experienceId: string;
   scopes: string[];
+  authProvider?: string;
+  trustId?: string | null;
 };
 
 export type StaffAuth = {
@@ -20,9 +27,22 @@ export type StaffAuth = {
   staffId: string;
   displayName: string;
   role: StaffRole;
+  branchIds: string[];
+  permissions: Permission[];
+  organizationId?: string | null;
+  authProvider?: string;
+  trustId?: string | null;
 };
 
-export type AuthContext = GuestAuth | StaffAuth;
+export type PlatformAuth = {
+  kind: "platform";
+  sessionId: string;
+  adminId: string;
+  displayName: string;
+  email: string;
+};
+
+export type AuthContext = GuestAuth | StaffAuth | PlatformAuth;
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -33,13 +53,19 @@ declare module "fastify" {
 
 const GUEST_COOKIE = "hos_guest_session";
 const STAFF_COOKIE = "hos_staff_session";
+const PLATFORM_COOKIE = "hos_platform_session";
 
-export { GUEST_COOKIE, STAFF_COOKIE };
+export { GUEST_COOKIE, STAFF_COOKIE, PLATFORM_COOKIE };
 
 function readBearer(req: FastifyRequest): string | null {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return null;
   return header.slice("Bearer ".length).trim() || null;
+}
+
+function roleIsAllowed(actual: string, allowed: readonly string[]): boolean {
+  const actualNorm = normalizeStaffRole(actual);
+  return allowed.some((r) => r === actual || normalizeStaffRole(r) === actualNorm);
 }
 
 export async function resolveGuestAuth(req: FastifyRequest): Promise<GuestAuth | null> {
@@ -64,6 +90,7 @@ export async function resolveGuestAuth(req: FastifyRequest): Promise<GuestAuth |
     displayName: session.displayName,
     experienceId: session.experienceId,
     scopes: Array.isArray(session.scopes) ? session.scopes.map(String) : [],
+    authProvider: session.authProvider,
   };
 }
 
@@ -83,13 +110,50 @@ export async function resolveStaffAuth(req: FastifyRequest): Promise<StaffAuth |
   }
   if (session.staff.status !== "active") return null;
 
+  const role = session.role as StaffRole;
+  const branchIds = parseJsonArray(session.staff.branchIds);
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: session.tenantId },
+    select: { organizationId: true },
+  });
+
   return {
     kind: "staff",
     sessionId: session.id,
     tenantId: session.tenantId,
     staffId: session.staffId,
     displayName: session.staff.displayName,
-    role: session.role as StaffRole,
+    role,
+    branchIds,
+    permissions: permissionsForRole(role),
+    organizationId: tenant?.organizationId ?? null,
+    authProvider: session.authProvider,
+    trustId: session.trustId,
+  };
+}
+
+export async function resolvePlatformAuth(req: FastifyRequest): Promise<PlatformAuth | null> {
+  const token =
+    readBearer(req) ??
+    (req.cookies?.[PLATFORM_COOKIE] as string | undefined) ??
+    null;
+  if (!token) return null;
+
+  const session = await prisma.platformAdminSession.findUnique({
+    where: { tokenHash: hashToken(token) },
+    include: { admin: true },
+  });
+  if (!session || session.revokedAt || session.expiresAt < new Date()) {
+    return null;
+  }
+  if (session.admin.status !== "active") return null;
+
+  return {
+    kind: "platform",
+    sessionId: session.id,
+    adminId: session.admin.id,
+    displayName: session.admin.displayName,
+    email: session.admin.email,
   };
 }
 
@@ -117,6 +181,17 @@ export async function requireStaff(req: FastifyRequest, reply: FastifyReply) {
   req.tenantId = auth.tenantId;
 }
 
+export async function requirePlatformAdmin(req: FastifyRequest, reply: FastifyReply) {
+  const auth = await resolvePlatformAuth(req);
+  if (!auth) {
+    return reply.code(401).send({
+      error: "unauthorized",
+      message: "Platform admin session required",
+    });
+  }
+  req.auth = auth;
+}
+
 export async function requireStaffRoles(
   roles: StaffRole[],
 ): Promise<(req: FastifyRequest, reply: FastifyReply) => Promise<unknown>> {
@@ -124,7 +199,7 @@ export async function requireStaffRoles(
     await requireStaff(req, reply);
     if (reply.sent) return;
     const auth = req.auth as StaffAuth;
-    if (!roles.includes(auth.role)) {
+    if (!roleIsAllowed(auth.role, roles)) {
       return reply.code(403).send({
         error: "forbidden",
         message: "Insufficient role for this action",
@@ -150,3 +225,5 @@ export function tenantNotFound(reply: FastifyReply) {
     message: "Resource not found",
   });
 }
+
+export { requirePermission } from "./permissions.js";

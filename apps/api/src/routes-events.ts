@@ -9,6 +9,11 @@ import {
   type StaffAuth,
   type GuestAuth,
 } from "./lib/auth.js";
+import {
+  assertBranchAccess,
+  branchIdFilter,
+  canAccessBranch,
+} from "./lib/branch-scope.js";
 import { requireEventsModule } from "./lib/module-gate.js";
 import { prisma } from "./db.js";
 import { writeAudit } from "./lib/audit.js";
@@ -78,14 +83,23 @@ export async function registerEventsRoutes(app: FastifyInstance) {
 
   app.get("/events/dashboard", { preHandler: staffAny }, async (req) => {
     const tenantId = req.tenantId!;
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const [openEvents, venues, ticketsToday, waitlist] = await Promise.all([
-      prisma.event.count({ where: { tenantId, status: { in: ["published", "open"] } } }),
+      prisma.event.count({
+        where: {
+          tenantId,
+          status: { in: ["published", "open"] },
+          ...(branchFilter ? { branchId: branchFilter } : {}),
+        },
+      }),
       prisma.eventVenue.count({ where: { tenantId } }),
       prisma.eventTicket.count({
         where: {
           tenantId,
           bookedAt: { gte: new Date(Date.now() - 24 * 3600000) },
           status: { not: "cancelled" },
+          ...(branchFilter ? { event: { branchId: branchFilter } } : {}),
         },
       }),
       prisma.eventWaitlist.count({ where: { tenantId, status: "waiting" } }),
@@ -203,15 +217,20 @@ export async function registerEventsRoutes(app: FastifyInstance) {
 
   // Events
   app.get("/events", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const events = await prisma.event.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { venue: true, eventType: true, ticketTypes: true, sessions: true },
       orderBy: { startsAt: "asc" },
     });
     return { events };
   });
 
-  app.post("/events", { preHandler: staffAdmin }, async (req) => {
+  app.post("/events", { preHandler: staffAdmin }, async (req, reply) => {
     const body = z
       .object({
         name: z.string().min(1),
@@ -219,6 +238,7 @@ export async function registerEventsRoutes(app: FastifyInstance) {
         description: z.string().optional(),
         venueId: z.string().optional(),
         eventTypeId: z.string().optional(),
+        branchId: z.string().optional(),
         startsAt: z.string(),
         endsAt: z.string(),
         capacity: z.number().int().positive().optional(),
@@ -226,9 +246,14 @@ export async function registerEventsRoutes(app: FastifyInstance) {
         terms: z.string().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     const event = await prisma.event.create({
       data: {
         tenantId: req.tenantId!,
+        branchId: body.branchId ?? null,
         name: body.name,
         code: body.code,
         description: body.description,
@@ -247,7 +272,7 @@ export async function registerEventsRoutes(app: FastifyInstance) {
     await writeAudit({
       tenantId: req.tenantId!,
       actorKind: "staff",
-      actorId: (req.auth as StaffAuth).staffId,
+      actorId: auth.staffId,
       action: "event.created",
       resource: "event",
       resourceId: event.id,
@@ -257,12 +282,16 @@ export async function registerEventsRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/publish", { preHandler: staffAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.event.findFirst({ where: { id, tenantId: req.tenantId! } });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     try {
       const event = await publishEvent({
         tenantId: req.tenantId!,
         eventId: id,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { event };
     } catch (err) {
@@ -274,13 +303,15 @@ export async function registerEventsRoutes(app: FastifyInstance) {
   app.patch("/events/:id/status", { preHandler: staffAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z.object({ status: z.enum(EVENT_STATUSES) }).parse(req.body);
+    const auth = req.auth as StaffAuth;
     const existing = await prisma.event.findFirst({ where: { id, tenantId: req.tenantId! } });
     if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const event = await prisma.event.update({ where: { id }, data: { status: body.status } });
     await writeAudit({
       tenantId: req.tenantId!,
       actorKind: "staff",
-      actorId: (req.auth as StaffAuth).staffId,
+      actorId: auth.staffId,
       action: "event.status_changed",
       resource: "event",
       resourceId: id,
@@ -307,6 +338,10 @@ export async function registerEventsRoutes(app: FastifyInstance) {
 
   app.post("/events/:id/sessions", { preHandler: staffAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.event.findFirst({ where: { id, tenantId: req.tenantId! } });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const body = z
       .object({
         name: z.string().min(1),
@@ -330,7 +365,7 @@ export async function registerEventsRoutes(app: FastifyInstance) {
         areaId: body.areaId,
         capacity: body.capacity,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { session };
     } catch (err) {
@@ -365,6 +400,12 @@ export async function registerEventsRoutes(app: FastifyInstance) {
         salesEnd: z.string().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    const event = await prisma.event.findFirst({
+      where: { id: body.eventId, tenantId: req.tenantId! },
+    });
+    if (!event) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, event.branchId, reply)) return;
     try {
       const ticketType = await createEventTicketType({
         tenantId: req.tenantId!,
@@ -377,7 +418,7 @@ export async function registerEventsRoutes(app: FastifyInstance) {
         salesStart: body.salesStart ? new Date(body.salesStart) : null,
         salesEnd: body.salesEnd ? new Date(body.salesEnd) : null,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { ticketType };
     } catch (err) {
@@ -398,12 +439,18 @@ export async function registerEventsRoutes(app: FastifyInstance) {
         joinWaitlistIfUnavailable: z.boolean().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    const event = await prisma.event.findFirst({
+      where: { id: body.eventId, tenantId: req.tenantId! },
+    });
+    if (!event) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, event.branchId, reply)) return;
     try {
       const ticket = await bookEventTicket({
         tenantId: req.tenantId!,
         ...body,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { ticket };
     } catch (err) {
@@ -444,10 +491,12 @@ export async function registerEventsRoutes(app: FastifyInstance) {
           .optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
     const event = await prisma.event.findFirst({
       where: { id: body.eventId, tenantId: req.tenantId! },
     });
     if (!event) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, event.branchId, reply)) return;
     await prisma.event.update({
       where: { id: event.id },
       data: { seatingMode: "assigned" },
@@ -484,7 +533,7 @@ export async function registerEventsRoutes(app: FastifyInstance) {
     await writeAudit({
       tenantId: req.tenantId!,
       actorKind: "staff",
-      actorId: (req.auth as StaffAuth).staffId,
+      actorId: auth.staffId,
       action: "seating_plan.created",
       resource: "seating_plan",
       resourceId: plan.id,
@@ -494,6 +543,12 @@ export async function registerEventsRoutes(app: FastifyInstance) {
 
   app.get("/seating/plans/:eventId", { preHandler: staffAny }, async (req, reply) => {
     const { eventId } = req.params as { eventId: string };
+    const auth = req.auth as StaffAuth;
+    const event = await prisma.event.findFirst({
+      where: { id: eventId, tenantId: req.tenantId! },
+    });
+    if (!event) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, event.branchId, reply)) return;
     const plan = await prisma.seatingPlan.findFirst({
       where: { eventId, tenantId: req.tenantId! },
       include: { sections: { include: { seats: true }, orderBy: { sortOrder: "asc" } } },

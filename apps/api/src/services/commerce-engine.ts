@@ -7,6 +7,7 @@ import {
 import { prisma } from "../db.js";
 import { writeAudit } from "../lib/audit.js";
 import { checkAvailability, createBooking } from "./booking-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
@@ -399,7 +400,7 @@ export async function calculatePrice(opts: {
     couponCode = couponResult.coupon.code;
   }
 
-  discountAmount = Math.min(discountAmount, subtotal);
+  discountAmount = Math.round(Math.min(discountAmount, subtotal));
   const afterDiscount = subtotal - discountAmount;
 
   const tax = await prisma.taxRule.findFirst({
@@ -407,7 +408,7 @@ export async function calculatePrice(opts: {
   });
   let taxAmount = 0;
   if (tax && tax.ratePercent > 0 && !tax.inclusive) {
-    taxAmount = afterDiscount * (tax.ratePercent / 100);
+    taxAmount = Math.round(afterDiscount * (tax.ratePercent / 100));
   }
 
   return {
@@ -541,7 +542,22 @@ export async function bookServiceOffering(opts: {
     metadata: { bookingId: booking.id },
   });
 
-  return { booking, offering, quote: await calculatePrice({ tenantId: opts.tenantId, offeringId: offering.id }) };
+  const quote = await calculatePrice({ tenantId: opts.tenantId, offeringId: offering.id });
+  if (opts.customerId && quote.unitPrice > 0) {
+    await tryEnsureLifecycleInvoice({
+      vertical: "commerce",
+      tenantId: opts.tenantId,
+      customerId: opts.customerId,
+      sourceEntityId: booking.id,
+      description: `Service · ${offering.name}`,
+      currency: quote.currencyCode ?? offering.currencyCode,
+      unitAmountMinor: quote.unitPrice,
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
+    });
+  }
+
+  return { booking, offering, quote };
 }
 
 export function mapOfferingPublic(

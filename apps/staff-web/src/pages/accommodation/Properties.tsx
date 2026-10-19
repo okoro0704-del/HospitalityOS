@@ -53,7 +53,7 @@ export function PropertiesPage() {
         <div>
           <p className="eyebrow">Accommodation</p>
           <h2>Properties</h2>
-          <p className="muted">Manage hotels, resorts, apartments, and short-stay properties.</p>
+          <p className="muted">Manage hotels, resorts, apartments, shared homes, and short-stays.</p>
         </div>
       </header>
       {error && <p className="error">{error}</p>}
@@ -65,6 +65,7 @@ export function PropertiesPage() {
           <option value="resort">Resort</option>
           <option value="apartment">Apartment</option>
           <option value="serviced_apartment">Serviced apartment</option>
+          <option value="shared_home">Shared home</option>
           <option value="guest_house">Guest house</option>
           <option value="hostel">Hostel</option>
           <option value="vacation_rental">Vacation rental</option>

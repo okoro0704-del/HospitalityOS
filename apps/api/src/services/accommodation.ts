@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import {
   BLOCKING_MAINTENANCE_STATUSES,
   BLOCKING_RESERVATION_STATUSES,
+  getMessagingProvider,
   type CalendarView,
   type HousekeepingStatus,
   type MaintenanceStatus,
@@ -17,6 +18,10 @@ import {
   transitionBooking,
   updateBooking,
 } from "./booking-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
+
+/** Domain messaging access — infrastructure only via IMessagingProvider. */
+export { getMessagingProvider };
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
@@ -344,6 +349,26 @@ export async function createReservation(opts: {
       title: "Reservation confirmed",
       body: `Your stay ${reservation.confirmationCode} is ${status}.`,
       metadata: { reservationId: reservation.id, bookingId },
+    });
+
+    const nightMs = 24 * 60 * 60 * 1000;
+    const nights = Math.max(
+      1,
+      Math.round(
+        (startOfDay(opts.checkOutDate).getTime() - startOfDay(opts.checkInDate).getTime()) /
+          nightMs,
+      ),
+    );
+    await tryEnsureLifecycleInvoice({
+      vertical: "accommodation",
+      tenantId: opts.tenantId,
+      customerId: opts.customerId,
+      sourceEntityId: reservation.id,
+      description: `Stay ${reservation.confirmationCode} · ${nights} night(s) · ${roomType.name}`,
+      unitAmountMinor: roomType.baseRate,
+      quantity: nights,
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
     });
   }
 
@@ -730,6 +755,28 @@ export async function checkOutReservation(opts: {
     body: `Room needs cleaning after checkout of ${existing.confirmationCode}.`,
     metadata: { roomId: existing.roomId, reservationId: existing.id },
   });
+
+  // Ensure stay invoice exists (idempotent BillableItem upsert) for final billing history.
+  if (reservation.roomType && reservation.customerId) {
+    const nightMs = 24 * 60 * 60 * 1000;
+    const nights = Math.max(
+      1,
+      Math.round(
+        (reservation.checkOutDate.getTime() - reservation.checkInDate.getTime()) / nightMs,
+      ),
+    );
+    await tryEnsureLifecycleInvoice({
+      vertical: "accommodation",
+      tenantId: opts.tenantId,
+      customerId: reservation.customerId,
+      sourceEntityId: reservation.id,
+      description: `Stay ${reservation.confirmationCode} · final bill · ${nights} night(s)`,
+      unitAmountMinor: reservation.roomType.baseRate,
+      quantity: nights,
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
+    });
+  }
 
   return reservation;
 }

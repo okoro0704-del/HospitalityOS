@@ -3,6 +3,7 @@ import { writeAudit } from "../lib/audit.js";
 import { createNotification } from "../lib/notifications.js";
 import { createBooking, ensureDefaultCategories } from "./booking-engine.js";
 import { createOffering, ensureDefaultCatalog } from "./commerce-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
 
 const DEFAULT_HOLD_MINUTES = 10;
 
@@ -151,12 +152,14 @@ export async function createCinemaVenue(opts: {
   code: string;
   description?: string | null;
   location?: string | null;
+  branchId?: string | null;
   actorKind: string;
   actorId?: string | null;
 }) {
   const venue = await prisma.cinemaVenue.create({
     data: {
       tenantId: opts.tenantId,
+      branchId: opts.branchId ?? null,
       name: opts.name,
       code: opts.code,
       description: opts.description ?? null,
@@ -760,6 +763,19 @@ export async function bookCinemaTicket(opts: {
       body: `Your ticket for ${showtime.content.title} is confirmed.`,
       metadata: { ticketId: ticket.id, showtimeId: showtime.id },
     });
+
+    if (ticketType.price > 0) {
+      await tryEnsureLifecycleInvoice({
+        vertical: "cinema",
+        tenantId: opts.tenantId,
+        customerId: opts.customerId,
+        sourceEntityId: ticket.id,
+        description: `Cinema · ${showtime.content.title} · ${ticketType.name}`,
+        unitAmountMinor: ticketType.price,
+        actorKind: opts.actorKind,
+        actorId: opts.actorId,
+      });
+    }
   }
 
   return prisma.cinemaTicket.findUniqueOrThrow({

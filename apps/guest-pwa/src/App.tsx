@@ -51,6 +51,7 @@ import {
 } from "./pages/Cinema";
 import { NotificationsPage } from "./pages/Notifications";
 import { GuestPaymentsPage, GuestInvoicesPage, GuestReceiptsPage } from "./pages/Billing";
+import { GuestActivityPage } from "./pages/Activity";
 import { PublicationPage } from "./pages/Publication";
 import { Shell } from "./components/Shell";
 import { RequireGuest } from "./components/RequireGuest";
@@ -106,6 +107,7 @@ export function App() {
         <Route path="/my-bookings" element={<MyBookingsPage />} />
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/activity" element={<GuestActivityPage />} />
         <Route path="/payments" element={<GuestPaymentsPage />} />
         <Route path="/invoices" element={<GuestInvoicesPage />} />
         <Route path="/receipts" element={<GuestReceiptsPage />} />

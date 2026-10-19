@@ -1,12 +1,16 @@
 import type { Prisma } from "@prisma/client";
 import {
   BLOCKING_BOOKING_STATUSES,
+  getMessagingProvider,
   type BookingStatus,
   type BookingCalendarView,
 } from "@hospitalityos/shared";
 import { prisma } from "../db.js";
 import { writeAudit } from "../lib/audit.js";
 import { createNotification } from "../lib/notifications.js";
+
+/** Domain messaging access — infrastructure only via IMessagingProvider. */
+export { getMessagingProvider };
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });

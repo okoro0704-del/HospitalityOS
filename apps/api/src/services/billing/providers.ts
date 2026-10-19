@@ -151,7 +151,8 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async verifyWebhook(opts: { payload: Record<string, unknown>; signature?: string }) {
-    // Mock: accept any payload; signature ignored (no secrets in client)
+    // Mock: require signature when WEBHOOK_SECRET verification is used by the route layer.
+    // Provider still validates payload shape; signature check is enforced by the API.
     const eventId = String(opts.payload.eventId ?? opts.payload.id ?? "");
     if (!eventId) {
       throw Object.assign(new Error("Missing eventId"), { code: "invalid_webhook", statusCode: 400 });
@@ -175,10 +176,14 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 }
 
-const mock = new MockPaymentProvider();
+import { FundzManPaymentProvider } from "./fundzman-provider.js";
 
-export function getPaymentProvider(id = "mock"): PaymentProvider {
-  if (id === "mock") return mock;
-  // Future: card / bank_transfer / wallet / token_network adapters register here
-  return mock;
+const mock = new MockPaymentProvider();
+let fundzBridge: FundzManPaymentProvider | null = null;
+
+export function getPaymentProvider(id = "fundzman"): PaymentProvider {
+  const key = (id || "fundzman").toLowerCase();
+  if (key === "mock") return mock;
+  if (!fundzBridge) fundzBridge = new FundzManPaymentProvider();
+  return fundzBridge;
 }

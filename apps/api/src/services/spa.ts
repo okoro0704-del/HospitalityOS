@@ -7,6 +7,7 @@ import {
   ensureDefaultCategories,
 } from "./booking-engine.js";
 import { createOffering, ensureDefaultCatalog } from "./commerce-engine.js";
+import { tryEnsureLifecycleInvoice } from "./billing/lifecycle.js";
 
 function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
@@ -255,6 +256,7 @@ export async function bookSpaAppointment(opts: {
   variantId?: string | null;
   therapistId?: string | null;
   roomId?: string | null;
+  branchId?: string | null;
   startsAt: Date;
   endsAt?: Date;
   notes?: string | null;
@@ -380,6 +382,7 @@ export async function bookSpaAppointment(opts: {
     const appointment = await prisma.spaAppointment.create({
       data: {
         tenantId: opts.tenantId,
+        branchId: opts.branchId ?? null,
         customerId: opts.customerId,
         treatmentId: treatment.id,
         variantId,
@@ -412,6 +415,21 @@ export async function bookSpaAppointment(opts: {
       resource: "spa_appointment",
       resourceId: appointment.id,
       metadata: { bookingId: booking.id },
+    });
+
+    const priceMinor =
+      appointment.variant?.price && appointment.variant.price > 0
+        ? appointment.variant.price
+        : treatment.price;
+    await tryEnsureLifecycleInvoice({
+      vertical: "spa",
+      tenantId: opts.tenantId,
+      customerId: opts.customerId,
+      sourceEntityId: appointment.id,
+      description: `Spa · ${treatment.name}`,
+      unitAmountMinor: priceMinor,
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
     });
 
     return { appointment, booking };

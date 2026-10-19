@@ -17,6 +17,11 @@ import {
   type StaffAuth,
   type GuestAuth,
 } from "./lib/auth.js";
+import {
+  assertBranchAccess,
+  branchIdFilter,
+  canAccessBranch,
+} from "./lib/branch-scope.js";
 import { requireAccommodationModule } from "./lib/module-gate.js";
 import { prisma } from "./db.js";
 import { parseJsonArray } from "./lib/crypto.js";
@@ -37,6 +42,7 @@ import {
 function mapProperty(p: {
   id: string;
   tenantId: string;
+  branchId?: string | null;
   name: string;
   code: string;
   propertyType: string;
@@ -57,6 +63,7 @@ function mapProperty(p: {
   return {
     id: p.id,
     tenantId: p.tenantId,
+    branchId: p.branchId ?? null,
     name: p.name,
     code: p.code,
     propertyType: p.propertyType,
@@ -206,19 +213,25 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   // ── Properties ───────────────────────────────────────────────
   app.get("/accommodation/properties", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const rows = await prisma.property.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       orderBy: { name: "asc" },
     });
     return { properties: rows.map(mapProperty) };
   });
 
-  app.post("/accommodation/properties", { preHandler: staffAdmin }, async (req) => {
+  app.post("/accommodation/properties", { preHandler: staffAdmin }, async (req, reply) => {
     const body = z
       .object({
         name: z.string().min(1),
         code: z.string().min(1),
         propertyType: z.enum(PROPERTY_TYPES),
+        branchId: z.string().optional(),
         timezone: z.string().default("UTC"),
         checkInTime: z.string().default("15:00"),
         checkOutTime: z.string().default("11:00"),
@@ -230,6 +243,10 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         inheritBranding: z.boolean().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
 
     const property = await prisma.property.create({
       data: { tenantId: req.tenantId!, ...body },
@@ -237,7 +254,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
     await writeAudit({
       tenantId: req.tenantId!,
       actorKind: "staff",
-      actorId: (req.auth as StaffAuth).staffId,
+      actorId: auth.staffId,
       action: "property.created",
       resource: "property",
       resourceId: property.id,
@@ -247,19 +264,23 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   app.get("/accommodation/properties/:id", { preHandler: staffAny }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
     const property = await prisma.property.findUnique({ where: { id } });
     if (!property || !assertSameTenant(property.tenantId, req.tenantId!)) {
       return tenantNotFound(reply);
     }
+    if (assertBranchAccess(auth, property.branchId, reply)) return;
     return { property: mapProperty(property) };
   });
 
   app.patch("/accommodation/properties/:id", { preHandler: staffAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
     const existing = await prisma.property.findUnique({ where: { id } });
     if (!existing || !assertSameTenant(existing.tenantId, req.tenantId!)) {
       return tenantNotFound(reply);
     }
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const body = z
       .object({
         name: z.string().min(1).optional(),
@@ -303,11 +324,14 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   // ── Room types ───────────────────────────────────────────────
   app.get("/accommodation/room-types", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const q = req.query as { propertyId?: string };
     const rows = await prisma.roomType.findMany({
       where: {
         tenantId: req.tenantId!,
         ...(q.propertyId ? { propertyId: q.propertyId } : {}),
+        ...(branchFilter ? { property: { branchId: branchFilter } } : {}),
       },
       include: { amenities: true },
       orderBy: { name: "asc" },
@@ -331,10 +355,12 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
       })
       .parse(req.body);
 
+    const auth = req.auth as StaffAuth;
     const property = await prisma.property.findFirst({
       where: { id: body.propertyId, tenantId: req.tenantId! },
     });
     if (!property) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, property.branchId, reply)) return;
 
     const roomType = await prisma.roomType.create({
       data: {
@@ -406,12 +432,15 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   // ── Rooms ────────────────────────────────────────────────────
   app.get("/accommodation/rooms", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const q = req.query as { propertyId?: string; roomTypeId?: string };
     const rows = await prisma.room.findMany({
       where: {
         tenantId: req.tenantId!,
         ...(q.propertyId ? { propertyId: q.propertyId } : {}),
         ...(q.roomTypeId ? { roomTypeId: q.roomTypeId } : {}),
+        ...(branchFilter ? { property: { branchId: branchFilter } } : {}),
       },
       orderBy: { number: "asc" },
     });
@@ -429,6 +458,13 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         notes: z.string().optional(),
       })
       .parse(req.body);
+
+    const auth = req.auth as StaffAuth;
+    const property = await prisma.property.findFirst({
+      where: { id: body.propertyId, tenantId: req.tenantId! },
+    });
+    if (!property) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, property.branchId, reply)) return;
 
     const roomType = await prisma.roomType.findFirst({
       where: {
@@ -524,12 +560,15 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   // ── Reservations (staff) ─────────────────────────────────────
   app.get("/accommodation/reservations", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const q = req.query as { propertyId?: string; status?: string };
     const rows = await prisma.accommodationReservation.findMany({
       where: {
         tenantId: req.tenantId!,
         ...(q.propertyId ? { propertyId: q.propertyId } : {}),
         ...(q.status ? { status: q.status } : {}),
+        ...(branchFilter ? { property: { branchId: branchFilter } } : {}),
       },
       orderBy: { checkInDate: "asc" },
     });
@@ -538,11 +577,18 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   app.get("/accommodation/reservations/:id", { preHandler: staffAny }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
     const row = await prisma.accommodationReservation.findUnique({
       where: { id },
-      include: { guests: true, timeline: { orderBy: { createdAt: "asc" } }, stay: true },
+      include: {
+        property: true,
+        guests: true,
+        timeline: { orderBy: { createdAt: "asc" } },
+        stay: true,
+      },
     });
     if (!row || !assertSameTenant(row.tenantId, req.tenantId!)) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, row.property.branchId, reply)) return;
     return {
       reservation: mapReservation(row),
       guests: row.guests,
@@ -568,6 +614,13 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
       })
       .parse(req.body);
 
+    const auth = req.auth as StaffAuth;
+    const property = await prisma.property.findFirst({
+      where: { id: body.propertyId, tenantId: req.tenantId! },
+    });
+    if (!property) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, property.branchId, reply)) return;
+
     try {
       const reservation = await createReservation({
         tenantId: req.tenantId!,
@@ -583,7 +636,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         internalNotes: body.internalNotes,
         guestNotes: body.guestNotes,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation: mapReservation(reservation) };
     } catch (err) {
@@ -594,6 +647,13 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   app.patch("/accommodation/reservations/:id", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.accommodationReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+      include: { property: true },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.property.branchId, reply)) return;
     const body = z
       .object({
         checkInDate: z.string().optional(),
@@ -620,7 +680,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         guestNotes: body.guestNotes,
         status: body.status,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation: mapReservation(reservation) };
     } catch (err) {
@@ -631,12 +691,19 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   app.post("/accommodation/reservations/:id/cancel", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.accommodationReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+      include: { property: true },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.property.branchId, reply)) return;
     try {
       const reservation = await cancelReservation({
         tenantId: req.tenantId!,
         reservationId: id,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation: mapReservation(reservation) };
     } catch (err) {
@@ -647,6 +714,13 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   app.post("/accommodation/reservations/:id/check-in", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.accommodationReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+      include: { property: true },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.property.branchId, reply)) return;
     const body = z.object({ roomId: z.string().optional() }).parse(req.body ?? {});
     try {
       const reservation = await checkInReservation({
@@ -654,7 +728,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         reservationId: id,
         roomId: body.roomId,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation: mapReservation(reservation) };
     } catch (err) {
@@ -665,12 +739,19 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   app.post("/accommodation/reservations/:id/check-out", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.accommodationReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+      include: { property: true },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.property.branchId, reply)) return;
     try {
       const reservation = await checkOutReservation({
         tenantId: req.tenantId!,
         reservationId: id,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation: mapReservation(reservation) };
     } catch (err) {
@@ -681,6 +762,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
 
   // ── Availability ─────────────────────────────────────────────
   app.get("/accommodation/availability", { preHandler: staffAny }, async (req, reply) => {
+    const auth = req.auth as StaffAuth;
     const q = z
       .object({
         propertyId: z.string(),
@@ -689,6 +771,12 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         checkOutDate: z.string(),
       })
       .parse(req.query);
+
+    const property = await prisma.property.findFirst({
+      where: { id: q.propertyId, tenantId: req.tenantId! },
+    });
+    if (!property) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, property.branchId, reply)) return;
 
     try {
       const rooms = await getAvailableRooms({
@@ -710,7 +798,8 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
   });
 
   // ── Calendar ─────────────────────────────────────────────────
-  app.get("/accommodation/calendar", { preHandler: staffAny }, async (req) => {
+  app.get("/accommodation/calendar", { preHandler: staffAny }, async (req, reply) => {
+    const auth = req.auth as StaffAuth;
     const q = z
       .object({
         propertyId: z.string(),
@@ -718,6 +807,12 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         date: z.string().optional(),
       })
       .parse(req.query);
+
+    const property = await prisma.property.findFirst({
+      where: { id: q.propertyId, tenantId: req.tenantId! },
+    });
+    if (!property) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, property.branchId, reply)) return;
 
     const calendar = await buildCalendar({
       tenantId: req.tenantId!,

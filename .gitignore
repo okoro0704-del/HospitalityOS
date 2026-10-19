@@ -3,6 +3,8 @@ dist/
 build/
 .env
 .env.local
+.env.staging
+.env.staging.local
 *.db
 *.db-journal
 .DS_Store
@@ -13,5 +15,12 @@ coverage/
 .keys/
 apps/api/prisma/dev.db
 apps/api/prisma/test.db
+apps/api/media-private/
+apps/api/media-private-staging/
 .vite/
 *.tsbuildinfo
+# Generated from schema.prisma by scripts/pg-*.mjs
+apps/api/prisma/schema.postgres.generated.prisma
+# Local database data and backups never belong in git
+apps/api/backups/
+apps/api/tools/postgres/

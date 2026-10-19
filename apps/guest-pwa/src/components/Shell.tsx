@@ -27,6 +27,7 @@ export function Shell() {
         <NavLink to="/cinema">Cinema</NavLink>
         <NavLink to="/stay">Stay</NavLink>
         <NavLink to="/my-bookings">Bookings</NavLink>
+        <NavLink to="/activity">Activity</NavLink>
         <NavLink to="/notifications">Alerts</NavLink>
         <NavLink to="/payments">Payments</NavLink>
         <NavLink to="/profile">Profile</NavLink>

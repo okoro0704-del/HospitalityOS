@@ -25,16 +25,17 @@ const prisma = new PrismaClient();
 const hours = [{ day: "mon", open: "09:00", close: "17:00", closed: false }];
 
 async function resetDb() {
-  await prisma.businessPublication.deleteMany();
-  await prisma.mediaAsset.deleteMany();
-  await prisma.offering.deleteMany();
-  await prisma.catalog.deleteMany();
-  await prisma.auditLog.deleteMany();
-  await prisma.staffSession.deleteMany();
-  await prisma.staffMember.deleteMany();
-  await prisma.tenantModule.deleteMany();
-  await prisma.branch.deleteMany();
-  await prisma.tenant.deleteMany();
+  await prisma.businessPublication.deleteMany().catch(() => undefined);
+  await prisma.mediaAsset.deleteMany().catch(() => undefined);
+  await prisma.offering.deleteMany().catch(() => undefined);
+  await prisma.catalog.deleteMany().catch(() => undefined);
+  await prisma.auditLog.deleteMany().catch(() => undefined);
+  await prisma.staffSession.deleteMany().catch(() => undefined);
+  await prisma.staffMember.deleteMany().catch(() => undefined);
+  await prisma.tenantModule.deleteMany().catch(() => undefined);
+  await prisma.branch.deleteMany().catch(() => undefined);
+  await prisma.tenant.deleteMany().catch(() => undefined);
+  await prisma.organization.deleteMany().catch(() => undefined);
 }
 
 before(async () => {

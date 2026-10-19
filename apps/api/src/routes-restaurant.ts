@@ -15,6 +15,11 @@ import {
   type StaffAuth,
   type GuestAuth,
 } from "./lib/auth.js";
+import {
+  assertBranchAccess,
+  branchIdFilter,
+  canAccessBranch,
+} from "./lib/branch-scope.js";
 import { requireRestaurantModule } from "./lib/module-gate.js";
 import { prisma } from "./db.js";
 import { writeAudit } from "./lib/audit.js";
@@ -27,6 +32,8 @@ import {
   createOrder,
   joinTables,
   seatReservation,
+  settleDiningOrder,
+  POS_SETTLEMENT_METHODS,
   splitTableGroup,
   transitionOrder,
   updateDiningReservation,
@@ -67,6 +74,16 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
     "manager",
     "front_desk",
     "operations",
+    "restaurant_staff",
+  ]);
+  const staffKitchen = await staffPre([
+    "owner",
+    "admin",
+    "manager",
+    "front_desk",
+    "operations",
+    "restaurant_staff",
+    "kitchen",
   ]);
   const staffAdmin = await staffPre(["owner", "admin", "manager"]);
   const guest = await guestPre();
@@ -74,20 +91,38 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
   // Dashboard summary
   app.get("/dining/dashboard", { preHandler: staffAny }, async (req) => {
     const tenantId = req.tenantId!;
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const [tables, reservations, orders, tickets] = await Promise.all([
-      prisma.diningTable.groupBy({ by: ["status"], where: { tenantId }, _count: true }),
+      prisma.diningTable.groupBy({
+        by: ["status"],
+        where: {
+          tenantId,
+          ...(branchFilter ? { diningArea: { branchId: branchFilter } } : {}),
+        },
+        _count: true,
+      }),
       prisma.diningReservation.count({
         where: {
           tenantId,
+          ...(branchFilter ? { branchId: branchFilter } : {}),
           status: { in: ["pending", "confirmed"] },
           seatingAt: { gte: new Date() },
         },
       }),
       prisma.diningOrder.count({
-        where: { tenantId, status: { in: ["submitted", "preparing", "ready"] } },
+        where: {
+          tenantId,
+          ...(branchFilter ? { branchId: branchFilter } : {}),
+          status: { in: ["submitted", "preparing", "ready"] },
+        },
       }),
       prisma.kitchenTicket.count({
-        where: { tenantId, status: { in: ["queued", "preparing"] } },
+        where: {
+          tenantId,
+          ...(branchFilter ? { order: { branchId: branchFilter } } : {}),
+          status: { in: ["queued", "preparing"] },
+        },
       }),
     ]);
     return {
@@ -100,40 +135,53 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   // Areas
   app.get("/dining/areas", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const areas = await prisma.diningArea.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { _count: { select: { tables: true } } },
       orderBy: { name: "asc" },
     });
     return { areas };
   });
 
-  app.post("/dining/areas", { preHandler: staffAdmin }, async (req) => {
+  app.post("/dining/areas", { preHandler: staffAdmin }, async (req, reply) => {
     const body = z
       .object({
         name: z.string().min(1),
         code: z.string().min(1),
         areaType: z.enum(DINING_AREA_TYPES).optional(),
         description: z.string().optional(),
+        branchId: z.string().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     const area = await createDiningArea({
       tenantId: req.tenantId!,
       ...body,
       actorKind: "staff",
-      actorId: (req.auth as StaffAuth).staffId,
+      actorId: auth.staffId,
     });
     return { area };
   });
 
   // Tables
   app.get("/dining/tables", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const q = req.query as { diningAreaId?: string; status?: string };
     const tables = await prisma.diningTable.findMany({
       where: {
         tenantId: req.tenantId!,
         ...(q.diningAreaId ? { diningAreaId: q.diningAreaId } : {}),
         ...(q.status ? { status: q.status } : {}),
+        ...(branchFilter ? { diningArea: { branchId: branchFilter } } : {}),
       },
       include: { diningArea: true, tableGroup: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -152,12 +200,18 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         isOutdoor: z.boolean().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    const area = await prisma.diningArea.findFirst({
+      where: { id: body.diningAreaId, tenantId: req.tenantId! },
+    });
+    if (!area) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, area.branchId, reply)) return;
     try {
       const table = await createDiningTable({
         tenantId: req.tenantId!,
         ...body,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { table };
     } catch (err) {
@@ -168,6 +222,13 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   app.patch("/dining/tables/:id/status", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.diningTable.findFirst({
+      where: { id, tenantId: req.tenantId! },
+      include: { diningArea: true },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.diningArea.branchId, reply)) return;
     const body = z.object({ status: z.enum(TABLE_STATUSES) }).parse(req.body);
     try {
       const table = await updateTableStatus({
@@ -175,7 +236,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         tableId: id,
         status: body.status,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { table };
     } catch (err) {
@@ -346,8 +407,13 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   // Reservations
   app.get("/dining/reservations", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const reservations = await prisma.diningReservation.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { table: true },
       orderBy: { seatingAt: "asc" },
     });
@@ -360,6 +426,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         diningAreaId: z.string().optional(),
         tableId: z.string().optional(),
         customerId: z.string().optional(),
+        branchId: z.string().optional(),
         partySize: z.number().int().positive(),
         seatingAt: z.string(),
         endsAt: z.string().optional(),
@@ -367,19 +434,39 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         joinWaitlistIfUnavailable: z.boolean().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    let branchId = body.branchId ?? null;
+    if (!branchId && body.diningAreaId) {
+      const area = await prisma.diningArea.findFirst({
+        where: { id: body.diningAreaId, tenantId: req.tenantId! },
+      });
+      if (!area) return tenantNotFound(reply);
+      branchId = area.branchId;
+    } else if (!branchId && body.tableId) {
+      const table = await prisma.diningTable.findFirst({
+        where: { id: body.tableId, tenantId: req.tenantId! },
+        include: { diningArea: true },
+      });
+      if (!table) return tenantNotFound(reply);
+      branchId = table.diningArea.branchId;
+    }
+    if (branchId && !canAccessBranch(auth, branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     try {
       const reservation = await createDiningReservation({
         tenantId: req.tenantId!,
         diningAreaId: body.diningAreaId,
         tableId: body.tableId,
         customerId: body.customerId,
+        branchId: branchId ?? undefined,
         partySize: body.partySize,
         seatingAt: new Date(body.seatingAt),
         endsAt: body.endsAt ? new Date(body.endsAt) : null,
         notes: body.notes,
         joinWaitlistIfUnavailable: body.joinWaitlistIfUnavailable,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation };
     } catch (err) {
@@ -394,6 +481,12 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   app.patch("/dining/reservations/:id", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.diningReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const body = z
       .object({
         seatingAt: z.string().optional(),
@@ -413,7 +506,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         notes: body.notes,
         tableId: body.tableId,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation };
     } catch (err) {
@@ -424,12 +517,18 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   app.post("/dining/reservations/:id/cancel", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.diningReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     try {
       const reservation = await cancelDiningReservation({
         tenantId: req.tenantId!,
         reservationId: id,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { reservation };
     } catch (err) {
@@ -440,6 +539,12 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   app.post("/dining/reservations/:id/seat", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.diningReservation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const body = z.object({ tableId: z.string().optional() }).parse(req.body ?? {});
     try {
       const session = await seatReservation({
@@ -447,7 +552,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         reservationId: id,
         tableId: body.tableId,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { session };
     } catch (err) {
@@ -469,8 +574,13 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   // Orders
   app.get("/dining/orders", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const orders = await prisma.diningOrder.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { items: true, tickets: true },
       orderBy: { createdAt: "desc" },
       take: 100,
@@ -484,6 +594,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         sessionId: z.string().optional(),
         reservationId: z.string().optional(),
         customerId: z.string().optional(),
+        branchId: z.string().optional(),
         orderType: z.enum(DINING_ORDER_TYPES).optional(),
         notes: z.string().optional(),
         items: z
@@ -500,12 +611,16 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
           .min(1),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     try {
       const order = await createOrder({
         tenantId: req.tenantId!,
         ...body,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { order };
     } catch (err) {
@@ -516,6 +631,12 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
 
   app.post("/dining/orders/:id/transition", { preHandler: staffManage }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.diningOrder.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const body = z.object({ status: z.enum(DINING_ORDER_STATUSES) }).parse(req.body);
     try {
       const order = await transitionOrder({
@@ -523,7 +644,37 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
         orderId: id,
         status: body.status,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
+      });
+      return { order };
+    } catch (err) {
+      const e = err as Error & { code?: string; statusCode?: number };
+      return reply.code(e.statusCode ?? 400).send({ error: e.code ?? "error", message: e.message });
+    }
+  });
+
+  app.post("/dining/orders/:id/settle", { preHandler: staffManage }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.diningOrder.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
+    const body = z
+      .object({
+        method: z.enum(POS_SETTLEMENT_METHODS),
+        reservationId: z.string().min(1).optional(),
+      })
+      .parse(req.body);
+    try {
+      const order = await settleDiningOrder({
+        tenantId: req.tenantId!,
+        orderId: id,
+        method: body.method,
+        reservationId: body.reservationId,
+        actorKind: "staff",
+        actorId: auth.staffId,
       });
       return { order };
     } catch (err) {
@@ -533,7 +684,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
   });
 
   // Kitchen
-  app.get("/dining/kitchen/tickets", { preHandler: staffAny }, async (req) => {
+  app.get("/dining/kitchen/tickets", { preHandler: staffKitchen }, async (req) => {
     const tickets = await prisma.kitchenTicket.findMany({
       where: { tenantId: req.tenantId! },
       include: { order: { include: { items: true } }, station: true },
@@ -542,7 +693,7 @@ export async function registerRestaurantRoutes(app: FastifyInstance) {
     return { tickets };
   });
 
-  app.patch("/dining/kitchen/tickets/:id", { preHandler: staffManage }, async (req, reply) => {
+  app.patch("/dining/kitchen/tickets/:id", { preHandler: staffKitchen }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z
       .object({

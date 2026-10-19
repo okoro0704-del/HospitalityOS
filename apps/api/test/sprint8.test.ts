@@ -278,7 +278,7 @@ async function seedOpenEvent(auth: { token: string }, opts?: { capacity?: number
       eventId: event.json().event.id,
       name: "GA",
       code: `GA-${Date.now()}`,
-      price: 49,
+      price: 4900,
       capacity: opts?.capacity ?? 50,
     },
   });
@@ -547,7 +547,7 @@ test("packages and add-ons use Commerce", async () => {
     method: "POST",
     url: "/events/packages",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Wedding Package", code: `WP-${Date.now()}`, price: 5000 },
+    payload: { name: "Wedding Package", code: `WP-${Date.now()}`, price: 500000 },
   });
   assert.equal(pkg.statusCode, 200, pkg.body);
   assert.ok(pkg.json().package.offeringId);
@@ -555,7 +555,7 @@ test("packages and add-ons use Commerce", async () => {
     method: "POST",
     url: "/events/addons",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Lighting", code: `L-${Date.now()}`, price: 400 },
+    payload: { name: "Lighting", code: `L-${Date.now()}`, price: 40000 },
   });
   assert.equal(addon.statusCode, 200, addon.body);
   assert.ok(addon.json().addon.offeringId);

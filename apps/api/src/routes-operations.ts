@@ -14,6 +14,7 @@ import {
   requireStaffRoles,
   type StaffAuth,
 } from "./lib/auth.js";
+import { branchIdFilter, canAccessBranch } from "./lib/branch-scope.js";
 import { requireInventoryModule } from "./lib/module-gate.js";
 import { writeAudit } from "./lib/audit.js";
 import {
@@ -98,12 +99,35 @@ export async function registerOperationsRoutes(app: FastifyInstance) {
 
   /* Locations */
   app.get("/operations/locations", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const locations = await prisma.inventoryLocation.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter
+          ? { OR: [{ branchId: null }, { branchId: branchFilter }] }
+          : {}),
+      },
       include: { areas: true, children: true },
       orderBy: { name: "asc" },
     });
     return { locations };
+  });
+
+  app.get("/operations/locations/:id", { preHandler: staffAny }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const location = await prisma.inventoryLocation.findFirst({
+      where: { id, tenantId: req.tenantId! },
+      include: { areas: true, children: true },
+    });
+    if (!location) {
+      return reply.code(404).send({ error: "not_found", message: "Location not found" });
+    }
+    if (location.branchId && !canAccessBranch(auth, location.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
+    return { location };
   });
 
   app.post("/operations/locations", { preHandler: staffAdmin }, async (req, reply) => {
@@ -113,14 +137,19 @@ export async function registerOperationsRoutes(app: FastifyInstance) {
         code: z.string().min(1),
         description: z.string().optional(),
         parentId: z.string().optional(),
+        branchId: z.string().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     try {
       const location = await createInventoryLocation({
         tenantId: req.tenantId!,
         ...body,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return reply.code(201).send({ location });
     } catch (err) {

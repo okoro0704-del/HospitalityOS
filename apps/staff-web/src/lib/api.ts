@@ -9,7 +9,12 @@ export type StaffSessionState = {
   staffId: string;
   displayName: string;
   role: string;
+  branchIds: string[];
+  permissions: string[];
   expiresAt: string;
+  authProvider?: string;
+  trustId?: string | null;
+  trustIdVerified?: boolean;
 };
 
 export function saveSession(state: StaffSessionState) {
@@ -54,7 +59,12 @@ export async function login(tenantSlug: string, email: string, password: string)
     staffId: data.staff.id,
     displayName: data.staff.displayName,
     role: data.staff.role,
+    branchIds: data.staff.branchIds ?? [],
+    permissions: data.permissions ?? [],
     expiresAt: data.session.expiresAt,
+    authProvider: data.authProvider ?? data.session?.authProvider ?? "legacy_password",
+    trustId: data.trustId ?? data.session?.trustId ?? null,
+    trustIdVerified: (data.authProvider ?? data.session?.authProvider) === "trustid",
   };
   saveSession(state);
   return state;

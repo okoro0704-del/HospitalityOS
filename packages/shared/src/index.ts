@@ -61,20 +61,22 @@ export const MODULE_CATALOG: Record<ModuleId, ModuleDefinition> = {
   accommodation: {
     id: "accommodation",
     name: "Accommodation",
-    description: "Rooms, stays, and lodging inventory",
+    description:
+      "Hotels, resorts, apartments, shared homes, and local food kitchens — units, stays, housekeeping, and calendars",
     category: "hospitality",
     staffNavKey: "accommodation",
     guestNavKey: "stay",
-    version: "2.0.0",
+    version: "2.1.0",
   },
   restaurant: {
     id: "restaurant",
     name: "Restaurant & Dining",
-    description: "Menus, dining service, and table operations",
+    description:
+      "Menus, dining service, table operations, and local food / home kitchen delivery",
     category: "dining",
     staffNavKey: "restaurant",
     guestNavKey: "dining",
-    version: "2.0.0",
+    version: "2.1.0",
   },
   reservations: {
     id: "reservations",
@@ -293,13 +295,17 @@ export function isModuleId(value: string): value is ModuleId {
 export const STAFF_ROLES = [
   "owner",
   "admin",
+  "administrator",
   "manager",
   "front_desk",
+  "customer_service",
   "operations",
   "trainer",
   "instructor",
+  "fitness_staff",
   "spa_manager",
   "reception",
+  "spa_reception",
   "spa_therapist",
   "wellness_instructor",
   "event_manager",
@@ -307,19 +313,350 @@ export const STAFF_ROLES = [
   "event_staff",
   "checkin_staff",
   "cinema_manager",
+  "cinema_staff",
   "projection_staff",
   "concession_staff",
+  "restaurant_staff",
+  "kitchen",
   "inventory_manager",
+  "inventory_staff",
   "storekeeper",
   "maintenance_staff",
   "crm_manager",
   "communications_manager",
   "billing_manager",
   "billing_admin",
+  "finance",
   "viewer",
 ] as const;
 
 export type StaffRole = (typeof STAFF_ROLES)[number];
+
+/* ── RBAC permission catalog (Wave A) ───────────────────────── */
+
+export const PERMISSIONS = [
+  "customers.read",
+  "customers.write",
+  "customers.notes",
+  "customers.merge",
+  "bookings.read",
+  "bookings.write",
+  "orders.read",
+  "orders.write",
+  "payments.read",
+  "payments.create",
+  "payments.collect",
+  "payments.verify",
+  "payments.refund",
+  "payments.manage",
+  "billing.manage",
+  "settlements.read",
+  "financial_reports.read",
+  "inventory.read",
+  "inventory.adjust",
+  "staff.manage",
+  "roles.manage",
+  "settings.manage",
+  "audit.read",
+  "reports.read",
+  "media.read",
+  "media.write",
+  "notifications.manage",
+  "modules.manage",
+  "platform.tenants.read",
+] as const;
+export type Permission = (typeof PERMISSIONS)[number];
+
+/** All tenant-scoped permissions (excludes platform-only). */
+const TENANT_ADMIN_PERMISSIONS = PERMISSIONS.filter(
+  (p): p is Permission => p !== "platform.tenants.read",
+);
+
+const OPS_READ_WRITE: Permission[] = [
+  "customers.read",
+  "customers.write",
+  "customers.notes",
+  "bookings.read",
+  "bookings.write",
+  "orders.read",
+  "orders.write",
+  "payments.read",
+  "payments.create",
+  "payments.collect",
+  "payments.refund",
+  "inventory.read",
+  "inventory.adjust",
+  "staff.manage",
+  "settings.manage",
+  "audit.read",
+  "reports.read",
+  "media.read",
+  "media.write",
+  "notifications.manage",
+];
+
+const FRONT_DESK_PERMISSIONS: Permission[] = [
+  "customers.read",
+  "customers.write",
+  "bookings.read",
+  "bookings.write",
+  "payments.read",
+  "payments.create",
+  "payments.collect",
+  "media.read",
+  "reports.read",
+];
+
+const FINANCE_PERMISSIONS: Permission[] = [
+  "customers.read",
+  "payments.read",
+  "payments.create",
+  "payments.collect",
+  "payments.verify",
+  "payments.refund",
+  "payments.manage",
+  "billing.manage",
+  "settlements.read",
+  "financial_reports.read",
+  "audit.read",
+  "reports.read",
+];
+
+const VIEWER_PERMISSIONS: Permission[] = [
+  "customers.read",
+  "bookings.read",
+  "orders.read",
+  "payments.read",
+  "inventory.read",
+  "reports.read",
+  "media.read",
+];
+
+/**
+ * Least-privilege role → permission map.
+ * `admin` and `administrator` are peers with identical tenant permissions.
+ * `platform.tenants.read` is reserved for platform admins (not tenant staff).
+ */
+export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
+  owner: TENANT_ADMIN_PERMISSIONS,
+  admin: TENANT_ADMIN_PERMISSIONS,
+  administrator: TENANT_ADMIN_PERMISSIONS,
+
+  manager: OPS_READ_WRITE,
+
+  front_desk: FRONT_DESK_PERMISSIONS,
+  reception: FRONT_DESK_PERMISSIONS,
+  spa_reception: FRONT_DESK_PERMISSIONS,
+  customer_service: [
+    "customers.read",
+    "customers.write",
+    "customers.notes",
+    "bookings.read",
+    "orders.read",
+    "media.read",
+    "reports.read",
+  ],
+
+  finance: FINANCE_PERMISSIONS,
+  billing_admin: FINANCE_PERMISSIONS,
+  billing_manager: [
+    "customers.read",
+    "payments.read",
+    "payments.create",
+    "payments.collect",
+    "payments.verify",
+    "payments.refund",
+    "payments.manage",
+    "billing.manage",
+    "settlements.read",
+    "financial_reports.read",
+    "reports.read",
+  ],
+
+  kitchen: ["orders.read", "orders.write"],
+  restaurant_staff: [
+    "orders.read",
+    "orders.write",
+    "bookings.read",
+    "customers.read",
+    "media.read",
+  ],
+
+  fitness_staff: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+  ],
+  trainer: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+  ],
+  instructor: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+  ],
+  wellness_instructor: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+  ],
+
+  spa_manager: [
+    "customers.read",
+    "customers.write",
+    "customers.notes",
+    "bookings.read",
+    "bookings.write",
+    "orders.read",
+    "payments.read",
+    "payments.create",
+    "payments.collect",
+    "media.read",
+    "media.write",
+    "reports.read",
+  ],
+  spa_therapist: [
+    "customers.read",
+    "customers.notes",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+  ],
+
+  event_manager: [
+    "customers.read",
+    "customers.write",
+    "bookings.read",
+    "bookings.write",
+    "orders.read",
+    "payments.read",
+    "payments.create",
+    "media.read",
+    "media.write",
+    "reports.read",
+  ],
+  venue_manager: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+    "media.write",
+    "reports.read",
+  ],
+  event_staff: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "media.read",
+  ],
+  checkin_staff: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+  ],
+
+  cinema_manager: [
+    "customers.read",
+    "customers.write",
+    "bookings.read",
+    "bookings.write",
+    "orders.read",
+    "orders.write",
+    "payments.read",
+    "payments.create",
+    "media.read",
+    "media.write",
+    "reports.read",
+  ],
+  cinema_staff: [
+    "customers.read",
+    "bookings.read",
+    "bookings.write",
+    "orders.read",
+    "orders.write",
+    "media.read",
+  ],
+  projection_staff: ["bookings.read", "media.read"],
+  concession_staff: [
+    "customers.read",
+    "orders.read",
+    "orders.write",
+    "payments.read",
+    "payments.create",
+  ],
+
+  inventory_manager: [
+    "inventory.read",
+    "inventory.adjust",
+    "reports.read",
+    "media.read",
+    "audit.read",
+  ],
+  inventory_staff: ["inventory.read", "inventory.adjust", "media.read"],
+  storekeeper: ["inventory.read", "inventory.adjust"],
+  maintenance_staff: ["inventory.read", "reports.read", "media.read"],
+  operations: [
+    "inventory.read",
+    "inventory.adjust",
+    "bookings.read",
+    "orders.read",
+    "reports.read",
+    "media.read",
+  ],
+
+  crm_manager: [
+    "customers.read",
+    "customers.write",
+    "customers.notes",
+    "customers.merge",
+    "bookings.read",
+    "orders.read",
+    "reports.read",
+    "media.read",
+    "media.write",
+    "audit.read",
+  ],
+  communications_manager: [
+    "customers.read",
+    "notifications.manage",
+    "media.read",
+    "media.write",
+    "reports.read",
+  ],
+
+  viewer: VIEWER_PERMISSIONS,
+};
+
+/** Map administrator → admin for billing / legacy role checks. */
+export function normalizeStaffRole(role: string): string {
+  if (role === "administrator") return "admin";
+  return role;
+}
+
+export function isStaffRole(value: string): value is StaffRole {
+  return (STAFF_ROLES as readonly string[]).includes(value);
+}
+
+export function permissionsForRole(role: string): Permission[] {
+  const direct = ROLE_PERMISSIONS[role];
+  if (direct) return [...direct];
+  const normalized = normalizeStaffRole(role);
+  if (normalized !== role) {
+    const via = ROLE_PERMISSIONS[normalized];
+    if (via) return [...via];
+  }
+  return [];
+}
+
+export function staffHasPermission(role: string, permission: Permission): boolean {
+  return permissionsForRole(role).includes(permission);
+}
 
 export type ActorKind = "guest" | "staff" | "system";
 
@@ -361,6 +698,10 @@ export interface TenantPublic {
   contact: TenantContact;
   operatingHours: OperatingHoursDay[];
   enabledModules: ModuleId[];
+  /** Portal suite modules (accommodation, dining, bar, gym_spa, events, billing, crm). */
+  suiteModules?: string[];
+  folioChargeEnabled?: boolean;
+  posSettlementMethods?: string[];
   experienceId?: string | null;
 }
 
@@ -403,6 +744,8 @@ export interface StaffPublic {
   role: StaffRole;
   branchIds: string[];
   status: "active" | "inactive";
+  trustId?: string | null;
+  externalIdentityRef?: string | null;
   createdAt: string;
 }
 
@@ -414,6 +757,7 @@ export interface GuestSessionPublic {
   experienceId: string;
   scopes: string[];
   expiresAt: string;
+  authProvider?: string;
 }
 
 export interface StaffSessionPublic {
@@ -423,6 +767,8 @@ export interface StaffSessionPublic {
   displayName: string;
   role: StaffRole;
   expiresAt: string;
+  authProvider?: string;
+  trustId?: string | null;
 }
 
 /** Experience token claims (LifeOS protocol — mirrored for independent verification). */
@@ -509,6 +855,7 @@ export const PROPERTY_TYPES = [
   "resort",
   "apartment",
   "serviced_apartment",
+  "shared_home",
   "guest_house",
   "hostel",
   "vacation_rental",
@@ -517,6 +864,29 @@ export const PROPERTY_TYPES = [
 
 export type PropertyType = (typeof PROPERTY_TYPES)[number];
 
+/** Guest/staff copy for lodging inventory (room vs unit). */
+export function lodgingUnitLabel(propertyType: string): { singular: string; plural: string } {
+  switch (propertyType) {
+    case "apartment":
+    case "serviced_apartment":
+    case "shared_home":
+    case "vacation_rental":
+    case "short_let":
+      return { singular: "unit", plural: "units" };
+    default:
+      return { singular: "room", plural: "rooms" };
+  }
+}
+
+export function isSharedHomesPropertyType(propertyType: string): boolean {
+  return (
+    propertyType === "apartment" ||
+    propertyType === "serviced_apartment" ||
+    propertyType === "shared_home" ||
+    propertyType === "vacation_rental" ||
+    propertyType === "short_let"
+  );
+}
 export const CALENDAR_VIEWS = ["daily", "weekly", "monthly"] as const;
 export type CalendarView = (typeof CALENDAR_VIEWS)[number];
 
@@ -933,6 +1303,7 @@ export type SpaRoomStatus = (typeof SPA_ROOM_STATUSES)[number];
 export const SPA_SENSITIVE_NOTE_ROLES = [
   "owner",
   "admin",
+  "administrator",
   "spa_manager",
   "spa_therapist",
 ] as const;
@@ -1278,6 +1649,7 @@ export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 export const PAYMENT_INTENT_STATUSES = [
   "created",
   "requires_action",
+  "awaiting_collection",
   "authorized",
   "captured",
   "cancelled",
@@ -1288,6 +1660,7 @@ export type PaymentIntentStatus = (typeof PAYMENT_INTENT_STATUSES)[number];
 
 export const PAYMENT_STATUSES = [
   "pending",
+  "pending_verification",
   "authorized",
   "captured",
   "cancelled",
@@ -1306,8 +1679,44 @@ export const REFUND_STATUSES = [
 ] as const;
 export type RefundStatus = (typeof REFUND_STATUSES)[number];
 
-export const PAYMENT_METHOD_TYPES = ["card", "bank_transfer", "wallet", "cash", "other"] as const;
+/** Legacy + PSP method labels (still valid). */
+export const PAYMENT_METHOD_TYPES = [
+  "card",
+  "bank_transfer",
+  "wallet",
+  "cash",
+  "other",
+  "pay_at_venue",
+  "pay_to_staff",
+  "bank_transfer_manual",
+  "card_manual",
+  "other_manual",
+] as const;
 export type PaymentMethodType = (typeof PAYMENT_METHOD_TYPES)[number];
+
+/**
+ * First-class operational (manual) payment methods — not external gateways.
+ * These coexist with future Paystack/Flutterwave/Stripe/Token Network adapters.
+ */
+export const MANUAL_PAYMENT_METHODS = [
+  "cash",
+  "pay_at_venue",
+  "pay_to_staff",
+  "bank_transfer_manual",
+  "card_manual",
+  "other_manual",
+] as const;
+export type ManualPaymentMethod = (typeof MANUAL_PAYMENT_METHODS)[number];
+
+export function isManualPaymentMethod(value: string): value is ManualPaymentMethod {
+  return (MANUAL_PAYMENT_METHODS as readonly string[]).includes(value);
+}
+
+/** Methods guests may request without an online PSP. */
+export const GUEST_MANUAL_PAYMENT_METHODS = ["pay_at_venue", "pay_to_staff"] as const;
+
+/** Methods that capture only after staff verification (e.g. bank transfer). */
+export const MANUAL_METHODS_REQUIRING_VERIFICATION = ["bank_transfer_manual"] as const;
 
 export const BILLABLE_ITEM_TYPES = [
   "ACCOMMODATION_RESERVATION",
@@ -1342,8 +1751,18 @@ export type BillingPermission = (typeof BILLING_PERMISSIONS)[number];
 export const BILLING_ROLE_PERMISSIONS: Record<string, readonly BillingPermission[]> = {
   owner: BILLING_PERMISSIONS,
   admin: BILLING_PERMISSIONS,
+  administrator: BILLING_PERMISSIONS,
   billing_admin: BILLING_PERMISSIONS,
   billing_manager: [
+    "billing.view",
+    "billing.create",
+    "billing.update",
+    "billing.refund",
+    "billing.cash",
+    "billing.settlement",
+    "billing.tax",
+  ],
+  finance: [
     "billing.view",
     "billing.create",
     "billing.update",
@@ -1355,12 +1774,60 @@ export const BILLING_ROLE_PERMISSIONS: Record<string, readonly BillingPermission
   manager: ["billing.view", "billing.create", "billing.update", "billing.cash", "billing.refund"],
   front_desk: ["billing.view", "billing.cash"],
   reception: ["billing.view", "billing.cash"],
+  spa_reception: ["billing.view", "billing.cash"],
+  restaurant_staff: ["billing.view", "billing.cash"],
+  kitchen: [],
   operations: ["billing.view"],
   viewer: ["billing.view"],
 };
 
 export function staffHasBillingPermission(role: string, permission: BillingPermission): boolean {
-  const perms = BILLING_ROLE_PERMISSIONS[role] ?? [];
+  const perms =
+    BILLING_ROLE_PERMISSIONS[role] ??
+    BILLING_ROLE_PERMISSIONS[normalizeStaffRole(role)] ??
+    [];
   return perms.includes(permission) || perms.includes("billing.admin");
 }
+
+/** Ecosystem primitive contracts (Messaging / Data Storage / Platform Jobs). */
+export * from "./primitives/index.js";
+
+/** LifeOS Portal / Master Distributor install manifest */
+export {
+  HOSPITALITYOS_MANIFEST,
+  HOSPITALITYOS_DEFAULT_SEED,
+  SHARED_HOMES_DEFAULT_SEED,
+  HOSPITALITYOS_DEFAULT_MODULES,
+  HOSPITALITYOS_OPTIONAL_MODULES,
+  SUITE_VERTICAL_MODULES,
+  SUITE_SHARED_MODULES,
+  SUITE_PLATFORM_INTERNAL_MODULES,
+  HOSPITALITYOS_INSTALL_TEMPLATES,
+  SUITE_TO_INTERNAL,
+  expandSuiteToInternal,
+  normalizeSuiteModules,
+  suiteFromInternal,
+  folioChargeEnabled,
+  posSettlementMethods,
+  resolveInstallTemplate,
+  resolveProvisionModules,
+  looksLikeSuitePayload,
+  businessTypeForSuite,
+  seedForBusinessType,
+  LOCAL_FOOD_WIZARD_DEFAULTS,
+  LOCAL_FOOD_ORDER_STATUSES,
+  LOCAL_FOOD_STATUS_TRANSITIONS,
+} from "./manifest/hospitalityos.manifest.js";
+export type {
+  HospitalityOsManifest,
+  HospitalityOsDefaultSeed,
+  RequiredLifeOsPrimitive,
+  SuiteVerticalModuleId,
+  SuiteSharedModuleId,
+  SuiteModuleId,
+  HospitalityInstallTemplateId,
+  HospitalityInstallTemplate,
+  HospitalityPortalPreset,
+  LocalFoodOrderStatus,
+} from "./manifest/hospitalityos.manifest.js";
 

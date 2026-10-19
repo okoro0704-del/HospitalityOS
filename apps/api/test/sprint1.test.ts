@@ -72,11 +72,14 @@ async function resetDb() {
   await clearNotificationsModule(prisma);
   await prisma.guestSession.deleteMany();
   await prisma.staffSession.deleteMany();
+  await prisma.platformAdminSession.deleteMany();
+  await prisma.platformAdmin.deleteMany();
   await prisma.customer.deleteMany();
   await prisma.staffMember.deleteMany();
   await prisma.tenantModule.deleteMany();
   await prisma.branch.deleteMany();
   await prisma.tenant.deleteMany();
+  await prisma.organization.deleteMany();
 
   const hotel = await prisma.tenant.create({
     data: {
@@ -428,36 +431,42 @@ test("authentication handoff rejects revoked LifeOS session", async () => {
 });
 
 test("demo guest entry creates local session without LifeOS", async () => {
-  const res = await app.inject({
-    method: "POST",
-    url: "/auth/guest/demo",
-    payload: { tenantSlug: "sunrise-hotel", displayName: "Demo Walker" },
-  });
-  assert.equal(res.statusCode, 200, res.body);
-  const body = res.json() as {
-    token: string;
-    session: { displayName: string };
-    tenantSlug: string;
-  };
-  assert.equal(body.tenantSlug, "sunrise-hotel");
-  assert.equal(body.session.displayName, "Demo Walker");
-  assert.ok(body.token.startsWith("hos_"));
+  const prev = config.allowDemoGuest;
+  config.allowDemoGuest = true;
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/guest/demo",
+      payload: { tenantSlug: "sunrise-hotel", displayName: "Demo Walker" },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const body = res.json() as {
+      token: string;
+      session: { displayName: string };
+      tenantSlug: string;
+    };
+    assert.equal(body.tenantSlug, "sunrise-hotel");
+    assert.equal(body.session.displayName, "Demo Walker");
+    assert.ok(body.token.startsWith("hos_"));
 
-  const me = await app.inject({
-    method: "GET",
-    url: "/auth/guest/me",
-    headers: { authorization: `Bearer ${body.token}` },
-  });
-  assert.equal(me.statusCode, 200);
-  assert.equal(me.json().customer.displayName, "Demo Walker");
+    const me = await app.inject({
+      method: "GET",
+      url: "/auth/guest/me",
+      headers: { authorization: `Bearer ${body.token}` },
+    });
+    assert.equal(me.statusCode, 200);
+    assert.equal(me.json().customer.displayName, "Demo Walker");
 
-  const modules = await app.inject({
-    method: "GET",
-    url: "/guest/modules",
-    headers: { authorization: `Bearer ${body.token}` },
-  });
-  assert.equal(modules.statusCode, 200);
-  assert.ok(Array.isArray(modules.json().modules));
+    const modules = await app.inject({
+      method: "GET",
+      url: "/guest/modules",
+      headers: { authorization: `Bearer ${body.token}` },
+    });
+    assert.equal(modules.statusCode, 200);
+    assert.ok(Array.isArray(modules.json().modules));
+  } finally {
+    config.allowDemoGuest = prev;
+  }
 });
 
 test("public tenant branding endpoint returns configuration model", async () => {

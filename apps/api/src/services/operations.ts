@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { writeAudit } from "../lib/audit.js";
 import { createNotification } from "../lib/notifications.js";
@@ -6,12 +7,15 @@ function httpError(message: string, code: string, statusCode: number) {
   return Object.assign(new Error(message), { code, statusCode });
 }
 
-async function ensureBalance(opts: {
-  tenantId: string;
-  itemId: string;
-  locationId: string;
-}) {
-  const existing = await prisma.inventoryBalance.findUnique({
+async function ensureBalance(
+  opts: {
+    tenantId: string;
+    itemId: string;
+    locationId: string;
+  },
+  db: typeof prisma = prisma,
+) {
+  const existing = await db.inventoryBalance.findUnique({
     where: {
       tenantId_itemId_locationId: {
         tenantId: opts.tenantId,
@@ -21,7 +25,7 @@ async function ensureBalance(opts: {
     },
   });
   if (existing) return existing;
-  return prisma.inventoryBalance.create({
+  return db.inventoryBalance.create({
     data: {
       tenantId: opts.tenantId,
       itemId: opts.itemId,
@@ -35,25 +39,33 @@ async function ensureBalance(opts: {
   });
 }
 
+const TX_OPTS = { timeout: 20_000, maxWait: 10_000 } as const;
+
 /**
  * Atomic stock delta. Positive = receive, negative = consume/transfer out.
  * Prevents available from going negative unless item.allowNegative.
  */
-async function applyStockDelta(opts: {
-  tenantId: string;
-  itemId: string;
-  locationId: string;
-  delta: number;
-  allowNegative: boolean;
-}): Promise<{ ok: boolean; balanceId: string; availableAfter: number; onHandAfter: number }> {
-  const balance = await ensureBalance({
-    tenantId: opts.tenantId,
-    itemId: opts.itemId,
-    locationId: opts.locationId,
-  });
+async function applyStockDelta(
+  opts: {
+    tenantId: string;
+    itemId: string;
+    locationId: string;
+    delta: number;
+    allowNegative: boolean;
+  },
+  db: typeof prisma = prisma,
+): Promise<{ ok: boolean; balanceId: string; availableAfter: number; onHandAfter: number }> {
+  const balance = await ensureBalance(
+    {
+      tenantId: opts.tenantId,
+      itemId: opts.itemId,
+      locationId: opts.locationId,
+    },
+    db,
+  );
 
   if (opts.allowNegative) {
-    const result = await prisma.$executeRaw`
+    const result = await db.$executeRaw`
       UPDATE InventoryBalance
       SET onHand = onHand + ${opts.delta},
           available = available + ${opts.delta},
@@ -62,7 +74,7 @@ async function applyStockDelta(opts: {
     `;
     if (Number(result) !== 1) return { ok: false, balanceId: balance.id, availableAfter: 0, onHandAfter: 0 };
   } else {
-    const result = await prisma.$executeRaw`
+    const result = await db.$executeRaw`
       UPDATE InventoryBalance
       SET onHand = onHand + ${opts.delta},
           available = available + ${opts.delta},
@@ -75,7 +87,7 @@ async function applyStockDelta(opts: {
     }
   }
 
-  const updated = await prisma.inventoryBalance.findUniqueOrThrow({ where: { id: balance.id } });
+  const updated = await db.inventoryBalance.findUniqueOrThrow({ where: { id: balance.id } });
   return {
     ok: true,
     balanceId: updated.id,
@@ -140,6 +152,7 @@ export async function createInventoryLocation(opts: {
   code: string;
   description?: string | null;
   parentId?: string | null;
+  branchId?: string | null;
   actorKind: string;
   actorId?: string | null;
 }) {
@@ -152,6 +165,7 @@ export async function createInventoryLocation(opts: {
   const location = await prisma.inventoryLocation.create({
     data: {
       tenantId: opts.tenantId,
+      branchId: opts.branchId ?? null,
       name: opts.name,
       code: opts.code,
       description: opts.description ?? null,
@@ -240,49 +254,56 @@ export async function postInventoryTransaction(opts: {
   const direction = opts.direction ?? (["consumption", "damage", "waste", "transfer"].includes(opts.type) ? "out" : "in");
   const delta = direction === "out" ? -opts.quantity : opts.quantity;
 
-  const applied = await applyStockDelta({
-    tenantId: opts.tenantId,
-    itemId: item.id,
-    locationId: location.id,
-    delta,
-    allowNegative: item.allowNegative,
-  });
-  if (!applied.ok) {
-    throw httpError("Insufficient available stock", "insufficient_stock", 409);
-  }
+  const { tx, applied } = await prisma.$transaction(async (db) => {
+    const appliedInner = await applyStockDelta(
+      {
+        tenantId: opts.tenantId,
+        itemId: item.id,
+        locationId: location.id,
+        delta,
+        allowNegative: item.allowNegative,
+      },
+      db as typeof prisma,
+    );
+    if (!appliedInner.ok) {
+      throw httpError("Insufficient available stock", "insufficient_stock", 409);
+    }
 
-  const tx = await prisma.inventoryTransaction.create({
-    data: {
-      tenantId: opts.tenantId,
-      itemId: item.id,
-      locationId: location.id,
-      type: opts.type,
-      quantity: opts.quantity,
-      direction,
-      reason: opts.reason ?? null,
-      referenceType: opts.referenceType ?? null,
-      referenceId: opts.referenceId ?? null,
-      balanceAfter: applied.onHandAfter,
-      actorKind: opts.actorKind,
-      actorId: opts.actorId ?? null,
-      metadata: (opts.metadata ?? {}) as object,
-    },
-  });
-
-  if (opts.type === "adjustment" || opts.type === "stock_count") {
-    await prisma.inventoryAdjustment.create({
+    const txRow = await db.inventoryTransaction.create({
       data: {
         tenantId: opts.tenantId,
         itemId: item.id,
         locationId: location.id,
-        transactionId: tx.id,
-        quantityDelta: delta,
+        type: opts.type,
+        quantity: opts.quantity,
+        direction,
         reason: opts.reason ?? null,
+        referenceType: opts.referenceType ?? null,
+        referenceId: opts.referenceId ?? null,
+        balanceAfter: appliedInner.onHandAfter,
         actorKind: opts.actorKind,
         actorId: opts.actorId ?? null,
+        metadata: (opts.metadata ?? {}) as Prisma.InputJsonValue,
       },
     });
-  }
+
+    if (opts.type === "adjustment" || opts.type === "stock_count") {
+      await db.inventoryAdjustment.create({
+        data: {
+          tenantId: opts.tenantId,
+          itemId: item.id,
+          locationId: location.id,
+          transactionId: txRow.id,
+          quantityDelta: delta,
+          reason: opts.reason ?? null,
+          actorKind: opts.actorKind,
+          actorId: opts.actorId ?? null,
+        },
+      });
+    }
+
+    return { tx: txRow, applied: appliedInner };
+  }, TX_OPTS);
 
   await maybeReorderAlert({
     tenantId: opts.tenantId,
@@ -324,84 +345,90 @@ export async function transferStock(opts: {
   });
   if (!item) throw httpError("Item not found", "not_found", 404);
 
-  const out = await applyStockDelta({
-    tenantId: opts.tenantId,
-    itemId: opts.itemId,
-    locationId: opts.fromLocationId,
-    delta: -opts.quantity,
-    allowNegative: item.allowNegative,
-  });
-  if (!out.ok) throw httpError("Insufficient available stock at source", "insufficient_stock", 409);
+  const { outTx, inTx, movement, outOnHand } = await prisma.$transaction(async (db) => {
+    const out = await applyStockDelta(
+      {
+        tenantId: opts.tenantId,
+        itemId: opts.itemId,
+        locationId: opts.fromLocationId,
+        delta: -opts.quantity,
+        allowNegative: item.allowNegative,
+      },
+      db as typeof prisma,
+    );
+    if (!out.ok) throw httpError("Insufficient available stock at source", "insufficient_stock", 409);
 
-  const inn = await applyStockDelta({
-    tenantId: opts.tenantId,
-    itemId: opts.itemId,
-    locationId: opts.toLocationId,
-    delta: opts.quantity,
-    allowNegative: true,
-  });
-  if (!inn.ok) {
-    await applyStockDelta({
-      tenantId: opts.tenantId,
-      itemId: opts.itemId,
-      locationId: opts.fromLocationId,
-      delta: opts.quantity,
-      allowNegative: true,
+    const inn = await applyStockDelta(
+      {
+        tenantId: opts.tenantId,
+        itemId: opts.itemId,
+        locationId: opts.toLocationId,
+        delta: opts.quantity,
+        allowNegative: true,
+      },
+      db as typeof prisma,
+    );
+    if (!inn.ok) {
+      throw httpError("Transfer failed at destination", "transfer_failed", 500);
+    }
+
+    const outTxRow = await db.inventoryTransaction.create({
+      data: {
+        tenantId: opts.tenantId,
+        itemId: opts.itemId,
+        locationId: opts.fromLocationId,
+        type: "transfer",
+        quantity: opts.quantity,
+        direction: "out",
+        reason: opts.reason ?? null,
+        balanceAfter: out.onHandAfter,
+        actorKind: opts.actorKind,
+        actorId: opts.actorId ?? null,
+        metadata: { toLocationId: opts.toLocationId },
+      },
     });
-    throw httpError("Transfer failed at destination", "transfer_failed", 500);
-  }
-
-  const outTx = await prisma.inventoryTransaction.create({
-    data: {
-      tenantId: opts.tenantId,
-      itemId: opts.itemId,
-      locationId: opts.fromLocationId,
-      type: "transfer",
-      quantity: opts.quantity,
-      direction: "out",
-      reason: opts.reason ?? null,
-      balanceAfter: out.onHandAfter,
-      actorKind: opts.actorKind,
-      actorId: opts.actorId ?? null,
-      metadata: { toLocationId: opts.toLocationId },
-    },
-  });
-  const inTx = await prisma.inventoryTransaction.create({
-    data: {
-      tenantId: opts.tenantId,
-      itemId: opts.itemId,
-      locationId: opts.toLocationId,
-      type: "transfer",
-      quantity: opts.quantity,
-      direction: "in",
-      reason: opts.reason ?? null,
-      balanceAfter: inn.onHandAfter,
-      actorKind: opts.actorKind,
-      actorId: opts.actorId ?? null,
-      metadata: { fromLocationId: opts.fromLocationId },
-    },
-  });
-
-  const movement = await prisma.inventoryMovement.create({
-    data: {
-      tenantId: opts.tenantId,
-      itemId: opts.itemId,
-      fromLocationId: opts.fromLocationId,
-      toLocationId: opts.toLocationId,
-      quantity: opts.quantity,
-      reason: opts.reason ?? null,
-      outTransactionId: outTx.id,
-      inTransactionId: inTx.id,
-      actorKind: opts.actorKind,
-      actorId: opts.actorId ?? null,
-    },
-  });
+    const inTxRow = await db.inventoryTransaction.create({
+      data: {
+        tenantId: opts.tenantId,
+        itemId: opts.itemId,
+        locationId: opts.toLocationId,
+        type: "transfer",
+        quantity: opts.quantity,
+        direction: "in",
+        reason: opts.reason ?? null,
+        balanceAfter: inn.onHandAfter,
+        actorKind: opts.actorKind,
+        actorId: opts.actorId ?? null,
+        metadata: { fromLocationId: opts.fromLocationId },
+      },
+    });
+    const movementRow = await db.inventoryMovement.create({
+      data: {
+        tenantId: opts.tenantId,
+        itemId: opts.itemId,
+        fromLocationId: opts.fromLocationId,
+        toLocationId: opts.toLocationId,
+        quantity: opts.quantity,
+        reason: opts.reason ?? null,
+        outTransactionId: outTxRow.id,
+        inTransactionId: inTxRow.id,
+        actorKind: opts.actorKind,
+        actorId: opts.actorId ?? null,
+      },
+    });
+    return {
+      outTx: outTxRow,
+      inTx: inTxRow,
+      movement: movementRow,
+      outOnHand: out.onHandAfter,
+    };
+  }, TX_OPTS);
 
   await maybeReorderAlert({
     tenantId: opts.tenantId,
     itemId: opts.itemId,
     locationId: opts.fromLocationId,
-    onHand: out.onHandAfter,
+    onHand: outOnHand,
   });
 
   await writeAudit({

@@ -32,16 +32,45 @@ export function TenantSelectPage() {
     }
 
     setLoading(true);
-    fetch(`${apiBase}/platform/tenants`)
+    fetch(`${apiBase}/public/demo/venues`)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(
             `Could not reach HospitalityOS API at ${apiBase} (${res.status}).`,
           );
         }
-        return res.json() as Promise<{ tenants: TenantPublic[] }>;
+        return res.json() as Promise<{
+          venues: Array<{
+            slug: string;
+            name: string;
+            businessType: string;
+            branding: { primaryColor: string; accentColor: string };
+            enabledModules: string[];
+            experienceId: string | null;
+          }>;
+        }>;
       })
-      .then((data) => setTenants(data.tenants))
+      .then((data) =>
+        setTenants(
+          data.venues.map((v) => ({
+            id: v.slug,
+            slug: v.slug,
+            name: v.name,
+            businessType: v.businessType,
+            status: "active" as const,
+            branding: {
+              primaryColor: v.branding.primaryColor,
+              secondaryColor: v.branding.primaryColor,
+              accentColor: v.branding.accentColor,
+              theme: "light" as const,
+            },
+            contact: {},
+            operatingHours: [],
+            enabledModules: v.enabledModules as TenantPublic["enabledModules"],
+            experienceId: v.experienceId,
+          })),
+        ),
+      )
       .catch((err) =>
         setError(
           err instanceof Error

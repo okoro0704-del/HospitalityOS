@@ -316,7 +316,7 @@ test("treatment CRUD uses Commerce Engine", async () => {
       name: "Swedish Massage",
       code: `SW-${Date.now()}`,
       durationMinutes: 60,
-      price: 90,
+      price: 9000,
       requiredRoomTypes: ["massage"],
       requiredSpecialties: ["massage"],
     },
@@ -336,13 +336,13 @@ test("treatment variants create commerce offerings", async () => {
     method: "POST",
     url: "/spa/treatments",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Facial", code: `F-${Date.now()}`, durationMinutes: 45, price: 70 },
+    payload: { name: "Facial", code: `F-${Date.now()}`, durationMinutes: 45, price: 7000 },
   });
   const variant = await app.inject({
     method: "POST",
     url: `/spa/treatments/${treatment.json().treatment.id}/variants`,
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "90 minutes", code: "90", durationMinutes: 90, price: 110 },
+    payload: { name: "90 minutes", code: "90", durationMinutes: 90, price: 11000 },
   });
   assert.equal(variant.statusCode, 200, variant.body);
   assert.ok(variant.json().variant.offeringId);
@@ -377,7 +377,7 @@ test("appointment lifecycle via Booking Engine", async () => {
       name: "Deep Tissue",
       code: `DT-${Date.now()}`,
       durationMinutes: 60,
-      price: 100,
+      price: 10000,
       requiredRoomTypes: ["massage"],
     },
   });
@@ -422,7 +422,7 @@ test("double-booking prevention for therapist", async () => {
     method: "POST",
     url: "/spa/treatments",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Hot Stone", code: `HS-${Date.now()}`, durationMinutes: 60, price: 120 },
+    payload: { name: "Hot Stone", code: `HS-${Date.now()}`, durationMinutes: 60, price: 12000 },
   });
   const therapist = await app.inject({
     method: "POST",
@@ -523,7 +523,7 @@ test("packages and memberships use Commerce", async () => {
     method: "POST",
     url: "/spa/packages",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Relax Bundle", code: `RB-${Date.now()}`, price: 160 },
+    payload: { name: "Relax Bundle", code: `RB-${Date.now()}`, price: 16000 },
   });
   assert.equal(pkg.statusCode, 200, pkg.body);
   assert.ok(pkg.json().package.offeringId);
@@ -532,7 +532,7 @@ test("packages and memberships use Commerce", async () => {
     method: "POST",
     url: "/spa/memberships/plans",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Spa Monthly", code: `SM-${Date.now()}`, durationDays: 30, price: 120 },
+    payload: { name: "Spa Monthly", code: `SM-${Date.now()}`, durationDays: 30, price: 12000 },
   });
   assert.equal(plan.statusCode, 200, plan.body);
   const mem = await app.inject({
@@ -574,7 +574,7 @@ test("guest booking and client TrustID mapping", async () => {
     method: "POST",
     url: "/spa/treatments",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Express Facial", code: `EF-${Date.now()}`, durationMinutes: 30, price: 55 },
+    payload: { name: "Express Facial", code: `EF-${Date.now()}`, durationMinutes: 30, price: 5500 },
   });
   const book = await app.inject({
     method: "POST",
@@ -633,7 +633,7 @@ test("sensitive notes role permissions", async () => {
     method: "POST",
     url: "/spa/treatments",
     headers: { authorization: `Bearer ${admin.token}` },
-    payload: { name: "Pedicure", code: `P-${Date.now()}`, durationMinutes: 45, price: 50 },
+    payload: { name: "Pedicure", code: `P-${Date.now()}`, durationMinutes: 45, price: 5000 },
   });
   const appt = await app.inject({
     method: "POST",

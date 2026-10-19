@@ -305,7 +305,7 @@ test("membership plan uses Commerce Engine offering", async () => {
       name: "Monthly",
       code: `M-${Date.now()}`,
       durationDays: 30,
-      price: 79,
+      price: 7900,
       facilityId: facility.id,
     },
   });
@@ -315,7 +315,7 @@ test("membership plan uses Commerce Engine offering", async () => {
   const offering = await prisma.offering.findUnique({ where: { id: created.offeringId } });
   assert.ok(offering);
   assert.equal(offering!.moduleId, "gym_membership");
-  assert.equal(offering!.basePrice, 79);
+  assert.equal(offering!.basePrice, 7900);
 });
 
 test("membership lifecycle: activate freeze resume cancel renew", async () => {
@@ -325,7 +325,7 @@ test("membership lifecycle: activate freeze resume cancel renew", async () => {
     method: "POST",
     url: "/fitness/plans",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Quarterly", code: `Q-${Date.now()}`, durationDays: 90, price: 199 },
+    payload: { name: "Quarterly", code: `Q-${Date.now()}`, durationDays: 90, price: 19900 },
   });
   assert.equal(plan.statusCode, 200, plan.body);
 
@@ -589,7 +589,7 @@ test("TrustID / LifeOS identity maps to member profile", async () => {
     method: "POST",
     url: "/fitness/plans",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Annual", code: `A-${Date.now()}`, durationDays: 365, price: 699 },
+    payload: { name: "Annual", code: `A-${Date.now()}`, durationDays: 365, price: 69900 },
   });
   const membership = await app.inject({
     method: "POST",
@@ -624,7 +624,7 @@ test("role permissions: viewer cannot create plans; trainer can book PT", async 
     method: "POST",
     url: "/fitness/plans",
     headers: { authorization: `Bearer ${viewer.token}` },
-    payload: { name: "X", code: `X-${Date.now()}`, price: 1 },
+    payload: { name: "X", code: `X-${Date.now()}`, price: 100 },
   });
   assert.equal(denied.statusCode, 403);
 

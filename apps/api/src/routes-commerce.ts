@@ -458,6 +458,15 @@ export async function registerCommerceRoutes(app: FastifyInstance) {
     return { media };
   });
 
+  app.get("/commerce/media/:id", { preHandler: staffAny }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const media = await prisma.mediaAsset.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!media) return tenantNotFound(reply);
+    return { media };
+  });
+
   app.post("/commerce/media", { preHandler: staffAdmin }, async (req) => {
     const body = z
       .object({
@@ -467,6 +476,7 @@ export async function registerCommerceRoutes(app: FastifyInstance) {
         altText: z.string().optional(),
         isCover: z.boolean().optional(),
         sortOrder: z.number().int().optional(),
+        isPublic: z.boolean().optional(),
       })
       .parse(req.body);
     const media = await prisma.mediaAsset.create({
@@ -477,6 +487,7 @@ export async function registerCommerceRoutes(app: FastifyInstance) {
         kind: body.kind ?? "image",
         altText: body.altText,
         isCover: body.isCover ?? false,
+        isPublic: body.isPublic ?? false,
         sortOrder: body.sortOrder ?? 0,
       },
     });

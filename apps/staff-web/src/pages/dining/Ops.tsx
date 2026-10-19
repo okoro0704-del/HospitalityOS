@@ -283,24 +283,39 @@ export function DiningMenusPage() {
 
 export function DiningOrdersPage() {
   const [orders, setOrders] = useState<
-    Array<{ id: string; status: string; orderType: string; total: number; items: Array<{ name: string; quantity: number }> }>
+    Array<{
+      id: string;
+      status: string;
+      orderType: string;
+      total: number;
+      billStatus?: string;
+      items: Array<{ name: string; quantity: number }>;
+    }>
   >([]);
   const [menuItems, setMenuItems] = useState<Array<{ id: string; name: string; price: number }>>([]);
   const [itemId, setItemId] = useState("");
   const [qty, setQty] = useState("1");
   const [error, setError] = useState<string | null>(null);
+  const [settlementMethods, setSettlementMethods] = useState<string[]>(["fundzman", "cash", "card"]);
+  const [folioEnabled, setFolioEnabled] = useState(false);
+  const [reservationId, setReservationId] = useState("");
 
   async function load() {
-    const [o, menus] = await Promise.all([
+    const [o, menus, tenant] = await Promise.all([
       apiGet<{ orders: typeof orders }>("/dining/orders"),
       apiGet<{
         menus: Array<{ sections: Array<{ items: Array<{ id: string; name: string; price: number }> }> }>;
       }>("/dining/menus"),
+      apiGet<{
+        tenant: { posSettlementMethods?: string[]; folioChargeEnabled?: boolean };
+      }>("/tenant"),
     ]);
     setOrders(o.orders);
     const items = menus.menus.flatMap((m) => m.sections.flatMap((s) => s.items));
     setMenuItems(items);
     if (items[0]) setItemId(items[0].id);
+    setSettlementMethods(tenant.tenant.posSettlementMethods?.length ? tenant.tenant.posSettlementMethods : ["fundzman", "cash", "card"]);
+    setFolioEnabled(Boolean(tenant.tenant.folioChargeEnabled));
   }
 
   useEffect(() => {
@@ -328,16 +343,35 @@ export function DiningOrdersPage() {
     await load();
   }
 
+  async function settle(id: string, method: string) {
+    try {
+      await apiSend(`/dining/orders/${id}/settle`, "POST", {
+        method,
+        reservationId: method === "charge_to_room" ? reservationId || undefined : undefined,
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Settle failed");
+    }
+  }
+
   return (
     <section className="page">
       <header className="page-header">
         <div>
           <p className="eyebrow">Restaurant</p>
           <h2>Orders</h2>
-          <p className="muted">Dine-in, takeaway, delivery & room service foundations.</p>
+          <p className="muted">Dine-in, takeaway, delivery, and POS settlement.</p>
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {folioEnabled ? (
+        <input
+          placeholder="In-house reservation id (for charge to room)"
+          value={reservationId}
+          onChange={(e) => setReservationId(e.target.value)}
+        />
+      ) : null}
       <form className="inline-form wrap" onSubmit={onCreate}>
         <select value={itemId} onChange={(e) => setItemId(e.target.value)}>
           {menuItems.map((i) => (
@@ -354,7 +388,7 @@ export function DiningOrdersPage() {
       <ul className="list">
         {orders.map((o) => (
           <li key={o.id}>
-            {o.orderType} · {o.status} · {o.total.toFixed(2)} ·{" "}
+            {o.orderType} · {o.status} · {o.billStatus ?? "open"} · {o.total.toFixed(2)} ·{" "}
             {o.items.map((i) => `${i.quantity}×${i.name}`).join(", ")}
             {o.status === "submitted" && (
               <button type="button" className="btn ghost" onClick={() => transition(o.id, "preparing")}>
@@ -371,6 +405,18 @@ export function DiningOrdersPage() {
                 Served
               </button>
             )}
+            {o.billStatus !== "paid" && o.billStatus !== "charged_to_room"
+              ? settlementMethods.map((method) => (
+                  <button
+                    key={method}
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => settle(o.id, method)}
+                  >
+                    {method === "charge_to_room" ? "Charge to Room Folio" : `Settle ${method}`}
+                  </button>
+                ))
+              : null}
           </li>
         ))}
       </ul>

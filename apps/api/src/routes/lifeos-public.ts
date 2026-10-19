@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireStaff, type StaffAuth } from "../lib/auth.js";
+import { type StaffAuth } from "../lib/auth.js";
+import { requirePermission } from "../lib/permissions.js";
 import { writeAudit } from "../lib/audit.js";
 import {
   createBusinessPublication,
@@ -45,44 +46,48 @@ export async function registerLifeOsPublicRoutes(app: FastifyInstance) {
       .send(Buffer.from(media.body));
   });
 
-  app.post("/staff/publications", { preHandler: [requireStaff] }, async (req, reply) => {
-    const auth = req.auth as StaffAuth;
-    const body = z
-      .object({
-        type: z.enum(["photo", "video", "post"]),
-        title: z.string().max(200).optional(),
-        caption: z.string().max(4000).optional(),
-        mediaAssetIds: z.array(z.string().min(1)).min(1).max(12),
-        relatedOfferingId: z.string().min(1).nullable().optional(),
-        publishNow: z.boolean().optional(),
-      })
-      .parse(req.body ?? {});
+  app.post(
+    "/staff/publications",
+    { preHandler: [requirePermission("media.write")] },
+    async (req, reply) => {
+      const auth = req.auth as StaffAuth;
+      const body = z
+        .object({
+          type: z.enum(["photo", "video", "post"]),
+          title: z.string().max(200).optional(),
+          caption: z.string().max(4000).optional(),
+          mediaAssetIds: z.array(z.string().min(1)).min(1).max(12),
+          relatedOfferingId: z.string().min(1).nullable().optional(),
+          publishNow: z.boolean().optional(),
+        })
+        .parse(req.body ?? {});
 
-    try {
-      const pub = await createBusinessPublication({
-        tenantId: auth.tenantId,
-        type: body.type,
-        title: body.title,
-        caption: body.caption,
-        mediaAssetIds: body.mediaAssetIds,
-        relatedOfferingId: body.relatedOfferingId,
-        publishNow: body.publishNow,
-      });
-      await writeAudit({
-        tenantId: auth.tenantId,
-        actorKind: "staff",
-        actorId: auth.staffId,
-        action: "business_publication.created",
-        resource: "business_publication",
-        resourceId: pub.id,
-      });
-      return reply.code(201).send({ publication: pub });
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      return reply.code(e.statusCode ?? 500).send({
-        error: e.code ?? "internal_error",
-        message: e.message ?? "Unexpected error",
-      });
-    }
-  });
+      try {
+        const pub = await createBusinessPublication({
+          tenantId: auth.tenantId,
+          type: body.type,
+          title: body.title,
+          caption: body.caption,
+          mediaAssetIds: body.mediaAssetIds,
+          relatedOfferingId: body.relatedOfferingId,
+          publishNow: body.publishNow,
+        });
+        await writeAudit({
+          tenantId: auth.tenantId,
+          actorKind: "staff",
+          actorId: auth.staffId,
+          action: "business_publication.created",
+          resource: "business_publication",
+          resourceId: pub.id,
+        });
+        return reply.code(201).send({ publication: pub });
+      } catch (err) {
+        const e = err as { statusCode?: number; code?: string; message?: string };
+        return reply.code(e.statusCode ?? 500).send({
+          error: e.code ?? "internal_error",
+          message: e.message ?? "Unexpected error",
+        });
+      }
+    },
+  );
 }

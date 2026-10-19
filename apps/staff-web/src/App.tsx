@@ -1,6 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoginPage } from "./pages/Login";
-import { DashboardPage } from "./pages/Dashboard";
 import { ModulesPage } from "./pages/Modules";
 import { CustomersPage, CustomerDetailPage, CustomerSegmentsPage, CustomerTagsPage, CustomerInteractionsPage, CustomerFeedbackPage, CustomerConsentPage, CustomerLoyaltyPage } from "./pages/Customers";
 import {
@@ -17,9 +16,13 @@ import {
   BillingRefundsPage,
   BillingSettlementsPage,
   BillingTaxesPage,
+  BillingCollectionsPage,
+  BillingReconciliationPage,
 } from "./pages/Billing";
 import { StaffPage } from "./pages/Staff";
-import { SettingsPage } from "./pages/Settings";
+import { SettingsHubPage, SettingsPage } from "./pages/Settings";
+import { OverviewPage } from "./pages/Settings";
+import { TodayPage } from "./pages/Today";
 import { OperationsPage } from "./pages/Operations";
 import { PropertiesPage } from "./pages/accommodation/Properties";
 import { RoomTypesPage } from "./pages/accommodation/RoomTypes";
@@ -130,7 +133,8 @@ export function App() {
           </RequireStaff>
         }
       >
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<TodayPage />} />
+        <Route path="/overview" element={<OverviewPage />} />
         <Route path="/modules" element={<ModulesPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/customers/segments" element={<CustomerSegmentsPage />} />
@@ -148,6 +152,8 @@ export function App() {
         <Route path="/billing" element={<BillingDashboardPage />} />
         <Route path="/billing/invoices" element={<BillingInvoicesPage />} />
         <Route path="/billing/payments" element={<BillingPaymentsPage />} />
+        <Route path="/billing/collections" element={<BillingCollectionsPage />} />
+        <Route path="/billing/reconciliation" element={<BillingReconciliationPage />} />
         <Route path="/billing/refunds" element={<BillingRefundsPage />} />
         <Route path="/billing/settlements" element={<BillingSettlementsPage />} />
         <Route path="/billing/taxes" element={<BillingTaxesPage />} />
@@ -249,7 +255,15 @@ export function App() {
         <Route path="/accommodation/housekeeping" element={<HousekeepingPage />} />
         <Route path="/accommodation/maintenance" element={<MaintenancePage />} />
         <Route path="/operations/:area" element={<OperationsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings" element={<SettingsHubPage />} />
+        <Route path="/settings/organization" element={<SettingsHubPage />} />
+        <Route path="/settings/branches" element={<SettingsHubPage />} />
+        <Route path="/settings/branding" element={<SettingsHubPage />} />
+        <Route path="/settings/modules" element={<ModulesPage />} />
+        <Route path="/settings/roles" element={<SettingsPage />} />
+        <Route path="/settings/integrations" element={<SettingsHubPage />} />
+        <Route path="/settings/security" element={<SettingsHubPage />} />
+        <Route path="/settings/audit" element={<SettingsHubPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

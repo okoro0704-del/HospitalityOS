@@ -335,7 +335,7 @@ async function seedOnSaleShow(
       showtimeId: showtime.json().showtime.id,
       name: "GA",
       code: `GA-${Date.now()}`,
-      price: 12,
+      price: 1200,
       capacity: opts?.capacity ?? 40,
     },
   });
@@ -597,7 +597,7 @@ test("concessions use Commerce and orders workflow", async () => {
       venueId: seeded.venue.id,
       name: "Popcorn",
       code: `POP-${Date.now()}`,
-      price: 5,
+      price: 500,
       category: "snack",
     },
   });
@@ -615,7 +615,7 @@ test("concessions use Commerce and orders workflow", async () => {
   });
   assert.equal(order.statusCode, 201, order.body);
   assert.equal(order.json().order.status, "submitted");
-  assert.equal(order.json().order.totalAmount, 10);
+  assert.equal(order.json().order.totalAmount, 1000);
 
   const ready = await app.inject({
     method: "PATCH",

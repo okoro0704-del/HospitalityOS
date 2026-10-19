@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { writeAudit } from "../lib/audit.js";
 
@@ -36,7 +37,7 @@ export async function recordCustomerEvent(opts: {
       sourceModule: opts.sourceModule,
       sourceEntityId: opts.sourceEntityId ?? null,
       title: opts.title ?? null,
-      metadata: (opts.metadata ?? {}) as object,
+      metadata: (opts.metadata ?? {}) as Prisma.InputJsonValue,
       occurredAt: opts.occurredAt ?? new Date(),
     },
   });
@@ -283,7 +284,7 @@ export async function updateCustomerProfile(opts: {
       ...(opts.data.trustId !== undefined ? { trustId: opts.data.trustId } : {}),
       ...(opts.data.status !== undefined ? { status: opts.data.status } : {}),
       ...(opts.data.preferences !== undefined
-        ? { preferences: opts.data.preferences as object }
+        ? { preferences: opts.data.preferences as Prisma.InputJsonValue }
         : {}),
     },
   });
@@ -337,7 +338,7 @@ export async function setCustomerPreference(opts: {
   bag[opts.key] = opts.value;
   await prisma.customer.update({
     where: { id: customer.id },
-    data: { preferences: bag as object },
+    data: { preferences: bag as Prisma.InputJsonValue },
   });
 
   await writeAudit({

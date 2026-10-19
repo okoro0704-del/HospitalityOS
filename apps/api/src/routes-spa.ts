@@ -15,6 +15,11 @@ import {
   type StaffAuth,
   type GuestAuth,
 } from "./lib/auth.js";
+import {
+  assertBranchAccess,
+  branchIdFilter,
+  canAccessBranch,
+} from "./lib/branch-scope.js";
 import { requireSpaModule } from "./lib/module-gate.js";
 import { prisma } from "./db.js";
 import { writeAudit } from "./lib/audit.js";
@@ -79,11 +84,14 @@ export async function registerSpaRoutes(app: FastifyInstance) {
 
   app.get("/spa/dashboard", { preHandler: staffAny }, async (req) => {
     const tenantId = req.tenantId!;
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const now = new Date();
     const [appointmentsToday, therapists, rooms, waitlist] = await Promise.all([
       prisma.spaAppointment.count({
         where: {
           tenantId,
+          ...(branchFilter ? { branchId: branchFilter } : {}),
           startsAt: {
             gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
             lt: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
@@ -375,8 +383,13 @@ export async function registerSpaRoutes(app: FastifyInstance) {
 
   // Appointments
   app.get("/spa/appointments", { preHandler: staffAny }, async (req) => {
+    const auth = req.auth as StaffAuth;
+    const branchFilter = branchIdFilter(auth);
     const appointments = await prisma.spaAppointment.findMany({
-      where: { tenantId: req.tenantId! },
+      where: {
+        tenantId: req.tenantId!,
+        ...(branchFilter ? { branchId: branchFilter } : {}),
+      },
       include: { treatment: true, therapist: true, room: true, variant: true },
       orderBy: { startsAt: "asc" },
       take: 100,
@@ -392,6 +405,7 @@ export async function registerSpaRoutes(app: FastifyInstance) {
         variantId: z.string().optional(),
         therapistId: z.string().optional(),
         roomId: z.string().optional(),
+        branchId: z.string().optional(),
         startsAt: z.string(),
         endsAt: z.string().optional(),
         notes: z.string().optional(),
@@ -399,6 +413,10 @@ export async function registerSpaRoutes(app: FastifyInstance) {
         joinWaitlistIfUnavailable: z.boolean().optional(),
       })
       .parse(req.body);
+    const auth = req.auth as StaffAuth;
+    if (body.branchId && !canAccessBranch(auth, body.branchId)) {
+      return reply.code(403).send({ error: "forbidden", message: "Branch access denied" });
+    }
     try {
       const result = await bookSpaAppointment({
         tenantId: req.tenantId!,
@@ -407,13 +425,14 @@ export async function registerSpaRoutes(app: FastifyInstance) {
         variantId: body.variantId,
         therapistId: body.therapistId,
         roomId: body.roomId,
+        branchId: body.branchId,
         startsAt: new Date(body.startsAt),
         endsAt: body.endsAt ? new Date(body.endsAt) : undefined,
         notes: body.notes,
         addonOfferingIds: body.addonOfferingIds,
         joinWaitlistIfUnavailable: body.joinWaitlistIfUnavailable,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return result;
     } catch (err) {
@@ -428,12 +447,18 @@ export async function registerSpaRoutes(app: FastifyInstance) {
 
   app.post("/spa/appointments/:id/cancel", { preHandler: staffOps }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.spaAppointment.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     try {
       const appointment = await cancelSpaAppointment({
         tenantId: req.tenantId!,
         appointmentId: id,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return { appointment };
     } catch (err) {
@@ -444,6 +469,12 @@ export async function registerSpaRoutes(app: FastifyInstance) {
 
   app.post("/spa/appointments/:id/complete", { preHandler: staffNotes }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = req.auth as StaffAuth;
+    const existing = await prisma.spaAppointment.findFirst({
+      where: { id, tenantId: req.tenantId! },
+    });
+    if (!existing) return tenantNotFound(reply);
+    if (assertBranchAccess(auth, existing.branchId, reply)) return;
     const body = z
       .object({
         generalNotes: z.string().optional(),
@@ -457,7 +488,7 @@ export async function registerSpaRoutes(app: FastifyInstance) {
         appointmentId: id,
         ...body,
         actorKind: "staff",
-        actorId: (req.auth as StaffAuth).staffId,
+        actorId: auth.staffId,
       });
       return result;
     } catch (err) {

@@ -540,7 +540,7 @@ test("commerce product can optionally link inventory item", async () => {
     kind: "product",
     name: "Retail Towel",
     code: `P-${Date.now()}`,
-    basePrice: 15,
+    basePrice: 1500,
     status: "active",
     visibility: "public",
     sku: "RTL-TWL",

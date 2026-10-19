@@ -269,7 +269,7 @@ test("service creation", async () => {
       kind: "service",
       name: "Yoga Class",
       code: "YOGA-60",
-      basePrice: 40,
+      basePrice: 4000,
       status: "active",
       durationMinutes: 60,
       bookable: true,
@@ -290,7 +290,7 @@ test("product creation independent of booking", async () => {
       name: "Coffee",
       code: "COFFEE",
       sku: "COF-1",
-      basePrice: 4.5,
+      basePrice: 450,
       status: "active",
     },
   });
@@ -309,7 +309,7 @@ test("package composition", async () => {
     method: "POST",
     url: "/commerce/offerings",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { kind: "service", name: "Stay", code: "STAY", basePrice: 100, status: "active" },
+    payload: { kind: "service", name: "Stay", code: "STAY", basePrice: 10000, status: "active" },
   });
   const product = await app.inject({
     method: "POST",
@@ -320,7 +320,7 @@ test("package composition", async () => {
       name: "Breakfast",
       code: "BFST",
       sku: "BF-1",
-      basePrice: 20,
+      basePrice: 2000,
       status: "active",
     },
   });
@@ -332,8 +332,8 @@ test("package composition", async () => {
       kind: "package",
       name: "Room + Breakfast",
       code: "RB-PKG",
-      bundlePrice: 110,
-      basePrice: 110,
+      bundlePrice: 11000,
+      basePrice: 11000,
       status: "active",
       packageItems: [
         { childOfferingId: service.json().offering.id, required: true },
@@ -359,7 +359,7 @@ test("pricing calculations with coupon", async () => {
       name: "Merch",
       code: "MERCH",
       sku: "M-1",
-      basePrice: 100,
+      basePrice: 10000,
       status: "active",
     },
   });
@@ -384,8 +384,8 @@ test("pricing calculations with coupon", async () => {
     payload: { offeringId: offering.json().offering.id, couponCode: "TEN" },
   });
   assert.equal(quote.statusCode, 200, quote.body);
-  assert.equal(quote.json().quote.discountAmount, 10);
-  assert.equal(quote.json().quote.total, 90);
+  assert.equal(quote.json().quote.discountAmount, 1000);
+  assert.equal(quote.json().quote.total, 9000);
 });
 
 test("promotion and coupon validation", async () => {
@@ -394,7 +394,7 @@ test("promotion and coupon validation", async () => {
     method: "POST",
     url: "/commerce/promotions",
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Flash", code: "FLASH5", kind: "fixed", amount: 5 },
+    payload: { name: "Flash", code: "FLASH5", kind: "fixed", amount: 500 },
   });
   await app.inject({
     method: "POST",
@@ -458,7 +458,7 @@ test("booking integration for services with availability links", async () => {
       kind: "service",
       name: "Studio Session",
       code: `SS-${Date.now()}`,
-      basePrice: 55,
+      basePrice: 5500,
       status: "active",
       bookable: true,
       bookableResourceIds: [resource.json().resource.id],
@@ -507,7 +507,7 @@ test("tenant isolation on offerings", async () => {
       name: "Hotel Merch",
       code: "HM-1",
       sku: "HM-1",
-      basePrice: 15,
+      basePrice: 1500,
       status: "active",
     },
   });
@@ -541,7 +541,7 @@ test("authorization: viewer cannot create offerings", async () => {
       name: "X",
       code: "X",
       sku: "X",
-      basePrice: 1,
+      basePrice: 100,
     },
   });
   assert.equal(res.statusCode, 403);
@@ -570,7 +570,7 @@ test("guest can browse catalog and validate coupon", async () => {
       name: "Guest Water",
       code: "GW-1",
       sku: "GW-1",
-      basePrice: 3,
+      basePrice: 300,
       status: "active",
       visibility: "public",
     },

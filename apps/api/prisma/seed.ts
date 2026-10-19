@@ -1,6 +1,23 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../src/lib/crypto.js";
 
+/**
+ * Seed modes:
+ * - development / test: allowed
+ * - demo: set HOS_SEED_MODE=demo
+ * - production: refused unless HOS_ALLOW_PRODUCTION_SEED=true (explicit admin action)
+ */
+const seedEnv = (process.env.HOS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+if (
+  (seedEnv === "production" || seedEnv === "prod") &&
+  process.env.HOS_ALLOW_PRODUCTION_SEED !== "true"
+) {
+  console.error(
+    "Refusing to seed production. Set HOS_ALLOW_PRODUCTION_SEED=true for an explicit administrative seed.",
+  );
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 const defaultHours = [
@@ -137,10 +154,40 @@ const tenants: SeedTenant[] = [
 async function main() {
   console.log("Seeding HospitalityOS…");
 
+  const platformAdmin = await prisma.platformAdmin.upsert({
+    where: { email: "platform@hospitalityos.local" },
+    create: {
+      email: "platform@hospitalityos.local",
+      displayName: "Platform Administrator",
+      passwordHash: hashPassword("password123"),
+      status: "active",
+    },
+    update: {
+      passwordHash: hashPassword("password123"),
+      status: "active",
+    },
+  });
+  console.log(`  platform admin ${platformAdmin.email}`);
+
   for (const t of tenants) {
+    const organization = await prisma.organization.upsert({
+      where: { slug: `org-${t.slug}` },
+      create: {
+        slug: `org-${t.slug}`,
+        name: `${t.name} Group`,
+        status: "active",
+        metadata: {},
+      },
+      update: {
+        name: `${t.name} Group`,
+        status: "active",
+      },
+    });
+
     const tenant = await prisma.tenant.upsert({
       where: { slug: t.slug },
       create: {
+        organizationId: organization.id,
         slug: t.slug,
         name: t.name,
         businessType: t.businessType,
@@ -159,6 +206,7 @@ async function main() {
         status: "active",
       },
       update: {
+        organizationId: organization.id,
         name: t.name,
         primaryColor: t.primaryColor,
         secondaryColor: t.secondaryColor,
@@ -185,6 +233,23 @@ async function main() {
       },
       update: { name: t.branchName, status: "active" },
     });
+
+    if (t.slug === "sunrise-hotel") {
+      await prisma.branch.upsert({
+        where: { tenantId_code: { tenantId: tenant.id, code: "ABJ" } },
+        create: {
+          tenantId: tenant.id,
+          name: "Abuja Wing",
+          code: "ABJ",
+          timezone: "Africa/Lagos",
+          isPrimary: false,
+          status: "active",
+          city: "Abuja",
+          country: "NG",
+        },
+        update: { name: "Abuja Wing", status: "active" },
+      });
+    }
 
     for (const moduleId of t.modules) {
       await prisma.tenantModule.upsert({
@@ -315,12 +380,12 @@ async function seedAccommodation(tenantId: string, name: string, businessType: s
       description: "Comfortable standard room with city views.",
       capacity: 2,
       bedConfiguration: "1 Queen",
-      baseRate: 120,
+      baseRate: 12000,
       currency: "USD",
       photoUrls: ["https://placehold.co/800x500/0f766e/ffffff?text=Standard"],
       status: "active",
     },
-    update: { name: "Standard", baseRate: 120, status: "active" },
+    update: { name: "Standard", baseRate: 12000, status: "active" },
   });
 
   const deluxe = await prisma.roomType.upsert({
@@ -333,12 +398,12 @@ async function seedAccommodation(tenantId: string, name: string, businessType: s
       description: "Spacious deluxe room with lounge seating.",
       capacity: 3,
       bedConfiguration: "1 King + Sofa",
-      baseRate: 180,
+      baseRate: 18000,
       currency: "USD",
       photoUrls: ["https://placehold.co/800x500/134e4a/ffffff?text=Deluxe"],
       status: "active",
     },
-    update: { name: "Deluxe", baseRate: 180, status: "active" },
+    update: { name: "Deluxe", baseRate: 18000, status: "active" },
   });
 
   for (const rt of [standard, deluxe]) {
@@ -460,7 +525,7 @@ async function seedCommerce(tenantId: string, tenantName: string) {
       categoryId: catStay.id,
       description: "A 60-minute bookable experience.",
       shortDescription: "Bookable service",
-      basePrice: 75,
+      basePrice: 7500,
       status: "active",
       visibility: "public",
       featured: true,
@@ -484,7 +549,7 @@ async function seedCommerce(tenantId: string, tenantName: string) {
       code: "WATER-500",
       categoryId: catRetail.id,
       shortDescription: "500ml still water",
-      basePrice: 3,
+      basePrice: 300,
       status: "active",
       visibility: "public",
       sku: "WTR-500",
@@ -507,8 +572,8 @@ async function seedCommerce(tenantId: string, tenantName: string) {
       name: "Welcome Package",
       code: "WELCOME-PKG",
       shortDescription: "Experience + water",
-      basePrice: 70,
-      bundlePrice: 70,
+      basePrice: 7000,
+      bundlePrice: 7000,
       status: "active",
       visibility: "public",
       packageItems: [
@@ -628,7 +693,7 @@ async function seedDining(tenantId: string, tenantName: string) {
       sectionId: section.id,
       name: "House Special",
       code: "SPECIAL",
-      price: 28,
+      price: 2800,
       description: "Chef's seasonal special",
       kitchenStationId: station.id,
       featured: true,
@@ -641,7 +706,7 @@ async function seedDining(tenantId: string, tenantName: string) {
       sectionId: section.id,
       name: "Garden Salad",
       code: "SALAD",
-      price: 12,
+      price: 1200,
       kitchenStationId: station.id,
       asProduct: true,
       actorKind: "system",
@@ -716,7 +781,7 @@ async function seedFitness(tenantId: string, tenantName: string) {
       code: "MONTHLY",
       description: "Full facility access for 30 days",
       durationDays: 30,
-      price: 79,
+      price: 7900,
       guestPrivileges: true,
       actorKind: "system",
     });
@@ -737,7 +802,7 @@ async function seedFitness(tenantId: string, tenantName: string) {
       code: "DAY",
       description: "Single-day facility access",
       durationDays: 1,
-      price: 25,
+      price: 2500,
       guestPrivileges: false,
       actorKind: "system",
     });
@@ -919,7 +984,7 @@ async function seedSpa(tenantId: string, tenantName: string) {
       code: "SWEDISH",
       description: "Classic full-body relaxation massage",
       durationMinutes: 60,
-      price: 90,
+      price: 9000,
       requiredRoomTypes: ["massage"],
       requiredSpecialties: ["massage"],
       actorKind: "system",
@@ -930,7 +995,7 @@ async function seedSpa(tenantId: string, tenantName: string) {
       name: "90 minutes",
       code: "90",
       durationMinutes: 90,
-      price: 130,
+      price: 13000,
       actorKind: "system",
     });
   }
@@ -970,7 +1035,7 @@ async function seedSpa(tenantId: string, tenantName: string) {
       code: "MONTHLY",
       description: "Monthly spa access with member rates",
       durationDays: 30,
-      price: 120,
+      price: 12000,
       benefits: ["member_rates", "sauna_access"],
       actorKind: "system",
     });
@@ -982,7 +1047,7 @@ async function seedSpa(tenantId: string, tenantName: string) {
       name: "Relax Bundle",
       code: "RELAX",
       description: "Massage + facial package",
-      price: 160,
+      price: 16000,
       items: [{ treatmentCode: "SWEDISH", qty: 1 }],
       actorKind: "system",
     });
@@ -1103,7 +1168,7 @@ async function seedEvents(tenantId: string, tenantName: string) {
       eventId: event.id,
       name: "General Admission",
       code: "GA",
-      price: 49,
+      price: 4900,
       capacity: 80,
       actorKind: "system",
     });
@@ -1112,7 +1177,7 @@ async function seedEvents(tenantId: string, tenantName: string) {
       eventId: event.id,
       name: "VIP",
       code: "VIP",
-      price: 149,
+      price: 14900,
       capacity: 20,
       actorKind: "system",
     });
@@ -1129,7 +1194,7 @@ async function seedEvents(tenantId: string, tenantName: string) {
       name: "Conference Package",
       code: "CONF-PKG",
       description: "Hall + catering placeholder",
-      price: 2500,
+      price: 250000,
       items: [{ kind: "venue" }, { kind: "catering" }],
       actorKind: "system",
     });
@@ -1140,7 +1205,7 @@ async function seedEvents(tenantId: string, tenantName: string) {
       tenantId,
       name: "Sound System",
       code: "SOUND",
-      price: 350,
+      price: 35000,
       actorKind: "system",
     });
   }
@@ -1255,7 +1320,7 @@ async function seedCinema(tenantId: string, tenantName: string) {
       showtimeId: showtime.id,
       name: "General Admission",
       code: "GA",
-      price: 12,
+      price: 1200,
       capacity: 40,
       actorKind: "system",
     });
@@ -1264,7 +1329,7 @@ async function seedCinema(tenantId: string, tenantName: string) {
       showtimeId: showtime.id,
       name: "VIP",
       code: "VIP",
-      price: 22,
+      price: 2200,
       capacity: 8,
       actorKind: "system",
     });
@@ -1277,7 +1342,7 @@ async function seedCinema(tenantId: string, tenantName: string) {
       name: "Large Popcorn",
       code: "POP-L",
       category: "snack",
-      price: 6.5,
+      price: 650,
       actorKind: "system",
     });
     await createConcession({
@@ -1286,7 +1351,7 @@ async function seedCinema(tenantId: string, tenantName: string) {
       name: "Soft Drink",
       code: "DRINK",
       category: "drink",
-      price: 3.5,
+      price: 350,
       actorKind: "system",
     });
   }

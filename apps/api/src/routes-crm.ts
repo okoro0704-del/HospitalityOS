@@ -32,11 +32,16 @@ import {
   updateCustomerProfile,
 } from "./services/crm.js";
 
-function mapErr(err: unknown) {
+function mapErr(err: unknown, requestId?: string) {
   const e = err as { statusCode?: number; code?: string; message?: string };
+  const status = e.statusCode ?? 500;
   return {
-    status: e.statusCode ?? 500,
-    body: { error: e.code ?? "internal_error", message: e.message ?? "Unexpected error" },
+    status,
+    body: {
+      error: e.code ?? "internal_error",
+      message: status >= 500 ? "Internal server error" : (e.message ?? "Unexpected error"),
+      ...(requestId ? { requestId } : {}),
+    },
   };
 }
 
@@ -549,7 +554,7 @@ export async function registerCrmRoutes(app: FastifyInstance) {
         name: body.name,
         code: body.code,
         description: body.description ?? null,
-        rules: body.rules as object,
+        rules: body.rules as import("@prisma/client").Prisma.InputJsonValue,
       },
     });
     return reply.code(201).send({ segment });

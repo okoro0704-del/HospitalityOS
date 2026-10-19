@@ -166,7 +166,7 @@ async function resetDb() {
       name: "Standard",
       code: "STD",
       capacity: 2,
-      baseRate: 100,
+      baseRate: 10000,
       photoUrls: [],
     },
   });

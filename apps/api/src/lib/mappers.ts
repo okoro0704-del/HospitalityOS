@@ -50,6 +50,7 @@ export function toTenantPublic(
     postalCode: tenant.postalCode,
     country: tenant.country,
   };
+  const settings = readTenantSettings(tenant);
   return {
     id: tenant.id,
     slug: tenant.slug,
@@ -62,8 +63,23 @@ export function toTenantPublic(
     enabledModules: modules
       .filter((m) => m.enabled)
       .map((m) => m.moduleId as ModuleId),
+    suiteModules: asStringArray(settings.enabledModules),
+    folioChargeEnabled: Boolean(settings.folioChargeEnabled),
+    posSettlementMethods: asStringArray(settings.posSettlementMethods),
     experienceId: tenant.experienceId,
   };
+}
+
+function readTenantSettings(tenant: Tenant): Record<string, unknown> {
+  if (!tenant.settings || typeof tenant.settings !== "object" || Array.isArray(tenant.settings)) {
+    return {};
+  }
+  return tenant.settings as Record<string, unknown>;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 export function toBranchPublic(branch: Branch): BranchPublic {
@@ -118,6 +134,8 @@ export function toStaffPublic(staff: StaffMember): StaffPublic {
     role: staff.role as StaffRole,
     branchIds: parseJsonArray(staff.branchIds),
     status: staff.status as StaffPublic["status"],
+    trustId: staff.trustId,
+    externalIdentityRef: staff.externalIdentityRef,
     createdAt: staff.createdAt.toISOString(),
   };
 }
@@ -131,6 +149,7 @@ export function toGuestSessionPublic(session: GuestSession): GuestSessionPublic 
     experienceId: session.experienceId,
     scopes: parseJsonArray(session.scopes),
     expiresAt: session.expiresAt.toISOString(),
+    authProvider: session.authProvider,
   };
 }
 
@@ -142,5 +161,7 @@ export function toStaffSessionPublic(session: StaffSession & { staff?: StaffMemb
     displayName: session.staff?.displayName ?? "Staff",
     role: session.role as StaffRole,
     expiresAt: session.expiresAt.toISOString(),
+    authProvider: session.authProvider,
+    trustId: session.trustId,
   };
 }

@@ -326,7 +326,7 @@ test("commerce engine integration for menu items", async () => {
     method: "POST",
     url: `/dining/sections/${section.json().section.id}/items`,
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Pasta", code: `P-${Date.now()}`, price: 18, asProduct: true },
+    payload: { name: "Pasta", code: `P-${Date.now()}`, price: 1800, asProduct: true },
   });
   assert.equal(item.statusCode, 200, item.body);
   assert.ok(item.json().item.offeringId);
@@ -355,7 +355,7 @@ test("order lifecycle and kitchen workflow", async () => {
     method: "POST",
     url: `/dining/sections/${section.json().section.id}/items`,
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Soup", code: `S-${Date.now()}`, price: 9 },
+    payload: { name: "Soup", code: `S-${Date.now()}`, price: 900 },
   });
 
   const order = await app.inject({
@@ -369,7 +369,7 @@ test("order lifecycle and kitchen workflow", async () => {
           menuItemId: item.json().item.id,
           name: "Soup",
           quantity: 1,
-          unitPrice: 9,
+          unitPrice: 900,
         },
       ],
     },
@@ -528,7 +528,7 @@ test("guest can browse menus and reserve", async () => {
     method: "POST",
     url: `/dining/sections/${section.json().section.id}/items`,
     headers: { authorization: `Bearer ${auth.token}` },
-    payload: { name: "Bread", code: `B-${Date.now()}`, price: 5, featured: true },
+    payload: { name: "Bread", code: `B-${Date.now()}`, price: 500, featured: true },
   });
 
   const guest = await guestLogin();
