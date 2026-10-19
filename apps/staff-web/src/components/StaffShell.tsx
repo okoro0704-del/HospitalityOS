@@ -153,7 +153,9 @@ const OPS_NAV = [
   { to: "/operations/tasks", label: "Tasks" },
 ];
 
-const OTHER_OPS = [{ to: "/settings", label: "Settings" }];
+const OTHER_OPS: Array<{ to: string; label: string; module?: string }> = [
+  { to: "/settings", label: "Settings" },
+];
 
 export function StaffShell() {
   const session = getSession();
@@ -205,7 +207,7 @@ export function StaffShell() {
       items.push(...OPS_NAV);
     }
     for (const item of OTHER_OPS) {
-      if (!("module" in item) || modules.includes(item.module!)) {
+      if (!item.module || modules.includes(item.module)) {
         items.push({ to: item.to, label: item.label });
       }
     }

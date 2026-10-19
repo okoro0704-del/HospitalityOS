@@ -222,6 +222,8 @@ model StaffMember {
     trustId         String
     status          String    @default("active")
     linkedAt        DateTime  @default(now())
+    linkedByStaffId String?
+    verifiedAt      DateTime?
     revokedAt       DateTime?
     metadata        Json
     createdAt       DateTime  @default(now())
