@@ -410,6 +410,34 @@ async function refreshInvoicePaid(invoiceId: string) {
   return updated;
 }
 
+/** Intent statuses a capture may start from ("failed" allows a retry). */
+const CLAIMABLE_INTENT_STATUSES = ["created", "requires_action", "failed"];
+
+/**
+ * Another request holds the capture claim on this intent. Wait briefly for its
+ * payment: the same idempotency key gets that payment back, a different key on
+ * a captured intent is refused as before, and a capture still running is a 409.
+ */
+async function awaitInFlightCapture(opts: { tenantId: string; intentId: string; payKey: string }) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    // Intent first: the winner writes its payment before marking the intent
+    // captured, so a captured intent read here guarantees the payment is visible.
+    const intent = await prisma.paymentIntent.findUniqueOrThrow({ where: { id: opts.intentId } });
+    const payment = await prisma.payment.findUnique({
+      where: { tenantId_idempotencyKey: { tenantId: opts.tenantId, idempotencyKey: opts.payKey } },
+    });
+    if (payment) return { intent, payment, receipt: null };
+    if (intent.status === "captured") {
+      throw httpError("Cannot capture intent in status captured", "invalid_state", 400);
+    }
+    if (intent.status !== "authorized") {
+      throw httpError("Capture failed", "payment_failed", 402);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw httpError("A capture for this payment is already in progress", "capture_in_progress", 409);
+}
+
 export async function authorizeAndCapture(opts: {
   tenantId: string;
   intentId: string;
@@ -432,29 +460,46 @@ export async function authorizeAndCapture(opts: {
     throw httpError(`Cannot capture intent in status ${intent.status}`, "invalid_state", 400);
   }
 
-  const provider = getPaymentProvider(intent.provider);
-  const auth = await provider.authorize({
-    providerRef: intent.providerRef!,
-    scenario: intent.scenario,
-  });
-  if (auth.status === "failed") {
-    await prisma.paymentIntent.update({
-      where: { id: intent.id },
-      data: { status: "failed" },
-    });
-    throw httpError("Authorization failed", "payment_failed", 402);
-  }
-
-  await prisma.paymentIntent.update({
-    where: { id: intent.id },
+  // Claim the intent before talking to the provider. Only the caller whose
+  // conditional update succeeds authorizes and captures, so concurrent retries
+  // cannot charge twice; the others wait for that caller's payment.
+  const claimed = await prisma.paymentIntent.updateMany({
+    where: { id: intent.id, tenantId: opts.tenantId, status: { in: CLAIMABLE_INTENT_STATUSES } },
     data: { status: "authorized" },
   });
+  if (claimed.count === 0) {
+    return awaitInFlightCapture({ tenantId: opts.tenantId, intentId: intent.id, payKey });
+  }
 
-  const capture = await provider.capture({
-    providerRef: intent.providerRef!,
-    amount: intent.amount,
-    scenario: intent.scenario,
-  });
+  const provider = getPaymentProvider(intent.provider);
+  let capture: Awaited<ReturnType<typeof provider.capture>>;
+  try {
+    const auth = await provider.authorize({
+      providerRef: intent.providerRef!,
+      scenario: intent.scenario,
+    });
+    if (auth.status === "failed") {
+      await prisma.paymentIntent.update({
+        where: { id: intent.id },
+        data: { status: "failed" },
+      });
+      throw httpError("Authorization failed", "payment_failed", 402);
+    }
+
+    capture = await provider.capture({
+      providerRef: intent.providerRef!,
+      amount: intent.amount,
+      scenario: intent.scenario,
+    });
+  } catch (err) {
+    // Release the claim so a later retry can proceed instead of finding the
+    // intent stuck in "authorized" with no payment.
+    await prisma.paymentIntent.updateMany({
+      where: { id: intent.id, status: "authorized" },
+      data: { status: "failed" },
+    });
+    throw err;
+  }
   if (capture.status === "failed") {
     await prisma.paymentIntent.update({
       where: { id: intent.id },

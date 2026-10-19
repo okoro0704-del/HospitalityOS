@@ -13,10 +13,13 @@ import { buildApp } from "../src/app.js";
 import { hashPassword } from "../src/lib/crypto.js";
 import { clearBillingModule } from "./helpers/cleanup-billing.js";
 import {
+  authorizeAndCapture,
   collectManualPayment,
   createInvoice,
+  createPaymentIntent,
   createRefund,
 } from "../src/services/billing/engine.js";
+import { getPaymentProvider } from "../src/services/billing/providers.js";
 import { enqueueJob } from "../src/services/jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -164,6 +167,51 @@ test("Wave D: two simultaneous cash collects — only one succeeds", async () =>
   const paid = await prisma.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
   assert.equal(paid.amountPaid, 30000);
   assert.equal(paid.status, "paid");
+});
+
+test("H0: simultaneous captures of one intent charge the provider once", async () => {
+  const hotel = await prisma.tenant.findUniqueOrThrow({ where: { slug: "waved-a" } });
+  const customer = await prisma.customer.findFirstOrThrow({ where: { tenantId: hotel.id } });
+  const invoice = await createInvoice({
+    tenantId: hotel.id,
+    customerId: customer.id,
+    currency: "NGN",
+    lines: [{ description: "Capture race", quantity: 1, unitAmount: 45000 }],
+  });
+  const intent = await createPaymentIntent({
+    tenantId: hotel.id,
+    invoiceId: invoice.id,
+    idempotencyKey: `capture_race_${invoice.id}`,
+    provider: "mock",
+  });
+
+  const provider = getPaymentProvider("mock");
+  const realCapture = provider.capture.bind(provider);
+  let providerCaptures = 0;
+  provider.capture = async (opts) => {
+    providerCaptures++;
+    await new Promise((resolve) => setTimeout(resolve, 50)); // widen the race window
+    return realCapture(opts);
+  };
+  try {
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        authorizeAndCapture({ tenantId: hotel.id, intentId: intent.id, idempotencyKey: `pay_race_${invoice.id}` }),
+      ),
+    );
+    assert.equal(new Set(results.map((r) => r.payment.id)).size, 1, "every caller gets the same payment");
+  } finally {
+    provider.capture = realCapture;
+  }
+
+  assert.equal(providerCaptures, 1, "the provider is asked to capture exactly once");
+  assert.equal(await prisma.payment.count({ where: { intentId: intent.id } }), 1);
+  assert.equal(
+    await prisma.billingTransaction.count({ where: { type: "capture", payment: { intentId: intent.id } } }),
+    1,
+  );
+  const after = await prisma.paymentIntent.findUniqueOrThrow({ where: { id: intent.id } });
+  assert.equal(after.status, "captured");
 });
 
 test("Wave D: duplicate refund same idempotency key returns same refund", async () => {
