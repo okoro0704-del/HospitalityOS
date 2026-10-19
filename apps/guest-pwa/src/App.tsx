@@ -51,6 +51,7 @@ import {
 } from "./pages/Cinema";
 import { NotificationsPage } from "./pages/Notifications";
 import { GuestPaymentsPage, GuestInvoicesPage, GuestReceiptsPage } from "./pages/Billing";
+import { PublicationPage } from "./pages/Publication";
 import { Shell } from "./components/Shell";
 import { RequireGuest } from "./components/RequireGuest";
 
@@ -58,6 +59,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/p/:id" element={<PublicationPage />} />
       <Route path="/auth/lifeos" element={<LifeOsAuthPage />} />
       <Route path="/start" element={<TenantSelectPage />} />
       <Route

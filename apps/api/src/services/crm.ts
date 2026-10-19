@@ -36,7 +36,7 @@ export async function recordCustomerEvent(opts: {
       sourceModule: opts.sourceModule,
       sourceEntityId: opts.sourceEntityId ?? null,
       title: opts.title ?? null,
-      metadata: opts.metadata ?? {},
+      metadata: (opts.metadata ?? {}) as object,
       occurredAt: opts.occurredAt ?? new Date(),
     },
   });
@@ -282,7 +282,9 @@ export async function updateCustomerProfile(opts: {
         : {}),
       ...(opts.data.trustId !== undefined ? { trustId: opts.data.trustId } : {}),
       ...(opts.data.status !== undefined ? { status: opts.data.status } : {}),
-      ...(opts.data.preferences !== undefined ? { preferences: opts.data.preferences } : {}),
+      ...(opts.data.preferences !== undefined
+        ? { preferences: opts.data.preferences as object }
+        : {}),
     },
   });
 
@@ -335,7 +337,7 @@ export async function setCustomerPreference(opts: {
   bag[opts.key] = opts.value;
   await prisma.customer.update({
     where: { id: customer.id },
-    data: { preferences: bag },
+    data: { preferences: bag as object },
   });
 
   await writeAudit({

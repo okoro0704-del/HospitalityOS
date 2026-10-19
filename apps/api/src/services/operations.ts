@@ -265,7 +265,7 @@ export async function postInventoryTransaction(opts: {
       balanceAfter: applied.onHandAfter,
       actorKind: opts.actorKind,
       actorId: opts.actorId ?? null,
-      metadata: opts.metadata ?? {},
+      metadata: (opts.metadata ?? {}) as object,
     },
   });
 

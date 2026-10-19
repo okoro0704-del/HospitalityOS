@@ -549,7 +549,7 @@ export async function registerCrmRoutes(app: FastifyInstance) {
         name: body.name,
         code: body.code,
         description: body.description ?? null,
-        rules: body.rules,
+        rules: body.rules as object,
       },
     });
     return reply.code(201).send({ segment });

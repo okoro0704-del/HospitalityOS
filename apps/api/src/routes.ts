@@ -37,6 +37,8 @@ import { registerOperationsRoutes } from "./routes-operations.js";
 import { registerCrmRoutes } from "./routes-crm.js";
 import { registerNotificationRoutes } from "./routes-notifications.js";
 import { registerBillingRoutes } from "./routes-billing.js";
+import { registerLifeOsPublicRoutes } from "./routes/lifeos-public.js";
+import { listLifeOsPublicFeed } from "./services/lifeos-public-feed.js";
 
 const cookieOpts = {
   path: "/",
@@ -65,6 +67,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await registerCrmRoutes(app);
   await registerNotificationRoutes(app);
   await registerBillingRoutes(app);
+  await registerLifeOsPublicRoutes(app);
 
   // ── Module catalog (platform-wide) ───────────────────────────
   app.get("/modules/catalog", async () => ({
@@ -86,6 +89,34 @@ export async function registerRoutes(app: FastifyInstance) {
       branches: tenant.branches
         .filter((b) => b.status === "active")
         .map(toBranchPublic),
+    };
+  });
+
+  /**
+   * Digiconomy News publication projection.
+   * HospitalityOS remains the owner. News stores nothing.
+   */
+  app.get("/tenants/:slug/public/publications", async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const tenant = await prisma.tenant.findUnique({ where: { slug } });
+    if (!tenant || tenant.status !== "active") {
+      return tenantNotFound(reply);
+    }
+    const feed = await listLifeOsPublicFeed({
+      kind: "publication",
+      tenantSlug: slug,
+      limit: 50,
+    });
+    return {
+      publications: feed.items.map((item) => ({
+        id: item.provenance.sourceItemId,
+        title: item.title,
+        caption: item.summary,
+        type: item.itemType,
+        canonicalSourceUrl: item.canonicalSourceUrl,
+        publishedAt: item.publishedAt,
+        assetReferences: item.assetReferences,
+      })),
     };
   });
 
