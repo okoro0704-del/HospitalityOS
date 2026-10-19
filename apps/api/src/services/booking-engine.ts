@@ -29,16 +29,19 @@ export function intervalsOverlap(
   return aStart < bEnd && bStart < aEnd;
 }
 
-async function addBookingTimeline(opts: {
-  tenantId: string;
-  bookingId: string;
-  eventType: string;
-  message: string;
-  actorKind: string;
-  actorId?: string | null;
-  metadata?: Record<string, unknown>;
-}) {
-  await prisma.bookingTimeline.create({
+async function addBookingTimeline(
+  opts: {
+    tenantId: string;
+    bookingId: string;
+    eventType: string;
+    message: string;
+    actorKind: string;
+    actorId?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+  db: Prisma.TransactionClient = prisma,
+) {
+  await db.bookingTimeline.create({
     data: {
       tenantId: opts.tenantId,
       bookingId: opts.bookingId,
@@ -51,7 +54,7 @@ async function addBookingTimeline(opts: {
   });
 }
 
-export async function ensureDefaultCategories(tenantId: string) {
+export async function ensureDefaultCategories(tenantId: string, db: Prisma.TransactionClient = prisma) {
   const defaults = [
     "accommodation",
     "dining",
@@ -64,7 +67,7 @@ export async function ensureDefaultCategories(tenantId: string) {
     "tourism",
   ];
   for (const code of defaults) {
-    await prisma.resourceCategory.upsert({
+    await db.resourceCategory.upsert({
       where: { tenantId_code: { tenantId, code } },
       create: {
         tenantId,
@@ -100,18 +103,25 @@ export async function ensureDefaultPolicy(tenantId: string, moduleId?: string) {
   });
 }
 
-export async function syncRoomToBookableResource(opts: {
-  tenantId: string;
-  roomId: string;
-  roomNumber: string;
-  propertyCode?: string;
-  capacity?: number;
-  status?: string;
-}) {
-  await ensureDefaultCategories(opts.tenantId);
-  const category = await prisma.resourceCategory.findUniqueOrThrow({
-    where: { tenantId_code: { tenantId: opts.tenantId, code: "accommodation" } },
-  });
+export async function syncRoomToBookableResource(
+  opts: {
+    tenantId: string;
+    roomId: string;
+    roomNumber: string;
+    propertyCode?: string;
+    capacity?: number;
+    status?: string;
+  },
+  db: Prisma.TransactionClient = prisma,
+) {
+  // Read first: upserting all categories on every call would make concurrent
+  // reservations queue on the same category rows.
+  const categoryKey = { tenantId_code: { tenantId: opts.tenantId, code: "accommodation" } };
+  let category = await db.resourceCategory.findUnique({ where: categoryKey });
+  if (!category) {
+    await ensureDefaultCategories(opts.tenantId, db);
+    category = await db.resourceCategory.findUniqueOrThrow({ where: categoryKey });
+  }
 
   const code = `ROOM-${opts.roomId.slice(-8)}-${opts.roomNumber}`;
   const resourceStatus =
@@ -121,7 +131,7 @@ export async function syncRoomToBookableResource(opts: {
         ? "maintenance"
         : "available";
 
-  return prisma.bookableResource.upsert({
+  return db.bookableResource.upsert({
     where: {
       tenantId_sourceType_sourceId: {
         tenantId: opts.tenantId,
@@ -150,6 +160,155 @@ export async function syncRoomToBookableResource(opts: {
       metadata: { propertyCode: opts.propertyCode ?? null },
     },
   });
+}
+
+/*
+ * Accommodation stays are mirrored into the universal booking engine so they appear
+ * on the shared calendar. The room-night ledger (services/room-allocation.ts) is what
+ * guarantees a room is free, so a mirror is written inside the reservation's own
+ * transaction with no availability or policy check of its own and no notifications —
+ * the accommodation service notifies once its transaction has committed. The engine's
+ * public booking paths refuse rooms and these mirrors so the two can never disagree.
+ */
+
+type StayRoom = { roomId: string; roomNumber: string; propertyCode?: string };
+
+export async function writeStayMirror(
+  db: Prisma.TransactionClient,
+  opts: StayRoom & {
+    tenantId: string;
+    customerId: string;
+    startsAt: Date;
+    endsAt: Date;
+    partySize: number;
+    notes?: string | null;
+    internalNotes?: string | null;
+    status: BookingStatus;
+    actorKind: string;
+    actorId?: string | null;
+  },
+) {
+  const resource = await syncRoomToBookableResource(
+    { tenantId: opts.tenantId, roomId: opts.roomId, roomNumber: opts.roomNumber, propertyCode: opts.propertyCode, capacity: 1 },
+    db,
+  );
+  const booking = await db.booking.create({
+    data: {
+      tenantId: opts.tenantId,
+      customerId: opts.customerId,
+      moduleId: "accommodation",
+      status: opts.status,
+      confirmationCode: bookingCode(),
+      startsAt: opts.startsAt,
+      endsAt: opts.endsAt,
+      partySize: opts.partySize,
+      notes: opts.notes ?? null,
+      internalNotes: opts.internalNotes ?? null,
+      items: {
+        create: [{
+          tenantId: opts.tenantId,
+          resourceId: resource.id,
+          quantity: 1,
+          startsAt: opts.startsAt,
+          endsAt: opts.endsAt,
+          status: "active",
+          metadata: {},
+        }],
+      },
+      reminders: {
+        create: [{
+          tenantId: opts.tenantId,
+          remindAt: new Date(opts.startsAt.getTime() - 60 * 60 * 1000),
+          channel: "in_app",
+          status: "scheduled",
+        }],
+      },
+    },
+  });
+  await addBookingTimeline(
+    {
+      tenantId: opts.tenantId,
+      bookingId: booking.id,
+      eventType: "booking.created",
+      message: `Booking ${booking.confirmationCode} created (${opts.status}) for an accommodation stay`,
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
+    },
+    db,
+  );
+  return booking;
+}
+
+export async function updateStayMirror(
+  db: Prisma.TransactionClient,
+  opts: {
+    tenantId: string;
+    bookingId: string;
+    startsAt?: Date;
+    endsAt?: Date;
+    partySize?: number;
+    notes?: string | null;
+    internalNotes?: string | null;
+    status?: BookingStatus;
+    room?: StayRoom;
+    actorKind: string;
+    actorId?: string | null;
+  },
+) {
+  if (opts.room) {
+    const resource = await syncRoomToBookableResource(
+      { tenantId: opts.tenantId, roomId: opts.room.roomId, roomNumber: opts.room.roomNumber, propertyCode: opts.room.propertyCode, capacity: 1 },
+      db,
+    );
+    await db.bookingItem.updateMany({ where: { bookingId: opts.bookingId }, data: { resourceId: resource.id } });
+  }
+  if (opts.startsAt || opts.endsAt) {
+    await db.bookingItem.updateMany({
+      where: { bookingId: opts.bookingId },
+      data: { ...(opts.startsAt ? { startsAt: opts.startsAt } : {}), ...(opts.endsAt ? { endsAt: opts.endsAt } : {}) },
+    });
+  }
+  const now = new Date();
+  await db.booking.update({
+    where: { id: opts.bookingId },
+    data: {
+      ...(opts.startsAt ? { startsAt: opts.startsAt } : {}),
+      ...(opts.endsAt ? { endsAt: opts.endsAt } : {}),
+      ...(opts.partySize !== undefined ? { partySize: opts.partySize } : {}),
+      ...(opts.notes !== undefined ? { notes: opts.notes } : {}),
+      ...(opts.internalNotes !== undefined ? { internalNotes: opts.internalNotes } : {}),
+      ...(opts.status ? { status: opts.status } : {}),
+      ...(opts.status === "checked_in" ? { checkedInAt: now } : {}),
+      ...(opts.status === "checked_out" ? { checkedOutAt: now } : {}),
+      ...(opts.status === "cancelled" ? { cancelledAt: now } : {}),
+    },
+  });
+  await addBookingTimeline(
+    {
+      tenantId: opts.tenantId,
+      bookingId: opts.bookingId,
+      eventType: opts.status ? `booking.${opts.status}` : "booking.updated",
+      message: opts.status ? `Status → ${opts.status}` : "Booking updated",
+      actorKind: opts.actorKind,
+      actorId: opts.actorId,
+    },
+    db,
+  );
+}
+
+/** Rooms and their stay mirrors are managed only through accommodation reservations. */
+async function assertNotAccommodation(opts: { tenantId: string; resourceIds?: string[]; booking?: { moduleId: string } }) {
+  if (opts.booking?.moduleId === "accommodation") {
+    throw httpError("Accommodation stays are changed through their reservation", "managed_by_accommodation", 409);
+  }
+  if (opts.resourceIds?.length) {
+    const rooms = await prisma.bookableResource.count({
+      where: { tenantId: opts.tenantId, id: { in: opts.resourceIds }, sourceType: "accommodation_room" },
+    });
+    if (rooms > 0) {
+      throw httpError("Rooms are booked through accommodation reservations", "managed_by_accommodation", 409);
+    }
+  }
 }
 
 export async function getPolicy(tenantId: string, moduleId?: string) {
@@ -331,6 +490,7 @@ export async function createBooking(opts: {
   if (!opts.items.length) {
     throw httpError("At least one booking item is required", "validation_error", 400);
   }
+  await assertNotAccommodation({ tenantId: opts.tenantId, resourceIds: opts.items.map((i) => i.resourceId) });
   if (!opts.skipPolicy) {
     await validateAgainstPolicy({
       tenantId: opts.tenantId,
@@ -475,6 +635,7 @@ export async function updateBooking(opts: {
     include: { items: true },
   });
   if (!existing) throw httpError("Booking not found", "not_found", 404);
+  await assertNotAccommodation({ tenantId: opts.tenantId, booking: existing });
   if (["cancelled", "completed", "expired", "checked_out"].includes(existing.status)) {
     throw httpError("Booking can no longer be modified", "invalid_state", 409);
   }
@@ -563,6 +724,7 @@ export async function cancelBooking(opts: {
     include: { items: true },
   });
   if (!existing) throw httpError("Booking not found", "not_found", 404);
+  await assertNotAccommodation({ tenantId: opts.tenantId, booking: existing });
   if (["cancelled", "checked_out", "completed"].includes(existing.status)) {
     throw httpError("Booking cannot be cancelled", "invalid_state", 409);
   }
@@ -635,6 +797,7 @@ export async function transitionBooking(opts: {
     where: { id: opts.bookingId, tenantId: opts.tenantId },
   });
   if (!existing) throw httpError("Booking not found", "not_found", 404);
+  await assertNotAccommodation({ tenantId: opts.tenantId, booking: existing });
 
   const data: Prisma.BookingUpdateInput = { status: opts.status };
   if (opts.status === "checked_in") data.checkedInAt = new Date();

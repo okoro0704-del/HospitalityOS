@@ -27,7 +27,7 @@ import { prisma } from "./db.js";
 import { parseJsonArray } from "./lib/crypto.js";
 import { writeAudit } from "./lib/audit.js";
 import {
-  createReservation,
+  reserveStay,
   updateReservation,
   cancelReservation,
   checkInReservation,
@@ -38,6 +38,22 @@ import {
   getAvailableRooms,
   startOfDay,
 } from "./services/accommodation.js";
+
+/**
+ * Optional `Idempotency-Key` header on reservation creation. A retry with the same key
+ * returns the original reservation instead of booking a second room.
+ */
+function idempotencyKeyFrom(headers: Record<string, unknown>): string | null {
+  const raw = headers["idempotency-key"];
+  if (raw === undefined) return null;
+  if (typeof raw !== "string" || !/^[A-Za-z0-9._:-]{8,200}$/.test(raw)) {
+    throw Object.assign(new Error("Idempotency-Key must be 8-200 characters of A-Z a-z 0-9 . _ : -"), {
+      code: "validation_error",
+      statusCode: 400,
+    });
+  }
+  return raw;
+}
 
 function mapProperty(p: {
   id: string;
@@ -622,7 +638,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
     if (assertBranchAccess(auth, property.branchId, reply)) return;
 
     try {
-      const reservation = await createReservation({
+      const { reservation, replayed } = await reserveStay({
         tenantId: req.tenantId!,
         propertyId: body.propertyId,
         roomTypeId: body.roomTypeId,
@@ -635,10 +651,11 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         status: body.status,
         internalNotes: body.internalNotes,
         guestNotes: body.guestNotes,
+        idempotencyKey: idempotencyKeyFrom(req.headers),
         actorKind: "staff",
         actorId: auth.staffId,
       });
-      return { reservation: mapReservation(reservation) };
+      return { reservation: mapReservation(reservation), replayed };
     } catch (err) {
       const e = err as Error & { code?: string; statusCode?: number };
       return reply.code(e.statusCode ?? 400).send({ error: e.code ?? "error", message: e.message });
@@ -1021,7 +1038,7 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
       .parse(req.body);
 
     try {
-      const reservation = await createReservation({
+      const { reservation, replayed } = await reserveStay({
         tenantId: req.tenantId!,
         propertyId: body.propertyId,
         roomTypeId: body.roomTypeId,
@@ -1032,10 +1049,11 @@ export async function registerAccommodationRoutes(app: FastifyInstance) {
         children: body.children,
         guestNotes: body.guestNotes,
         status: "confirmed",
+        idempotencyKey: idempotencyKeyFrom(req.headers),
         actorKind: "guest",
         actorId: auth.customerId,
       });
-      return { reservation: mapReservation(reservation) };
+      return { reservation: mapReservation(reservation), replayed };
     } catch (err) {
       const e = err as Error & { code?: string; statusCode?: number };
       return reply.code(e.statusCode ?? 400).send({ error: e.code ?? "error", message: e.message });

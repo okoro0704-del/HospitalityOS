@@ -598,6 +598,7 @@ model Room {
   availability RoomAvailability[]
   reservations AccommodationReservation[]
   stays        Stay[]
+  nightAllocations RoomNightAllocation[]
 
   @@unique([propertyId, number])
   @@index([tenantId])
@@ -644,6 +645,10 @@ model AccommodationReservation {
   checkedInAt      DateTime?
   checkedOutAt     DateTime?
   cancelledAt      DateTime?
+  /// Client-supplied key: a retried request returns this reservation instead of creating another.
+  idempotencyKey   String?
+  /// Fingerprint of the request that used idempotencyKey; a different request with that key is refused.
+  requestHash      String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -655,13 +660,36 @@ model AccommodationReservation {
   guests   ReservationGuest[]
   timeline ReservationTimeline[]
   stay     Stay?
+  nightAllocations RoomNightAllocation[]
 
   @@unique([tenantId, confirmationCode])
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([propertyId])
   @@index([customerId])
   @@index([status])
   @@index([checkInDate, checkOutDate])
+}
+
+/// Room-night ledger. A blocking reservation (pending, confirmed, checked-in) holds one row
+/// per night of its stay on its assigned room. The unique (roomId, night) index is the
+/// database-level guarantee against double-booking: whichever transaction writes a night
+/// second fails, and the reservation written in the same transaction rolls back with it.
+/// `night` is always UTC midnight (a CHECK constraint enforces this on PostgreSQL).
+model RoomNightAllocation {
+  id            String   @id @default(cuid())
+  tenantId      String
+  roomId        String
+  reservationId String
+  night         DateTime
+  createdAt     DateTime @default(now())
+
+  room        Room                     @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  reservation AccommodationReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, night])
+  @@index([tenantId, night])
+  @@index([reservationId])
 }
 
 model ReservationGuest {
