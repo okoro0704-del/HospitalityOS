@@ -1,22 +1,24 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../src/lib/crypto.js";
+import { registerLocalPrimitiveProvidersOrRemote } from "../src/services/register-primitives.js";
 
 /**
  * Seed modes:
  * - development / test: allowed
  * - demo: set HOS_SEED_MODE=demo
- * - production: refused unless HOS_ALLOW_PRODUCTION_SEED=true (explicit admin action)
+ * - production: always refused. This seed creates demo tenants and a platform
+ *   admin with fixed demo passwords (and resets them on re-run); production
+ *   accounts come from provisioning, never from here.
  */
 const seedEnv = (process.env.HOS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
-if (
-  (seedEnv === "production" || seedEnv === "prod") &&
-  process.env.HOS_ALLOW_PRODUCTION_SEED !== "true"
-) {
-  console.error(
-    "Refusing to seed production. Set HOS_ALLOW_PRODUCTION_SEED=true for an explicit administrative seed.",
-  );
+if (seedEnv === "production" || seedEnv === "prod") {
+  console.error("Refusing to seed production: this seed creates demo accounts with known passwords.");
   process.exit(1);
 }
+
+// Seeded bookings and events send notifications through the LifeOS primitives,
+// which the API registers at boot; the seed runs outside the API.
+registerLocalPrimitiveProvidersOrRemote();
 
 const prisma = new PrismaClient();
 

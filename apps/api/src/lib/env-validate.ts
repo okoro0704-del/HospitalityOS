@@ -18,6 +18,8 @@ const UNSAFE_SECRETS = new Set([
   "password",
   "test",
   "test-secret",
+  // Shipped as the default service token here and in sibling Digiconomy repos.
+  "dev-primitives-token",
 ]);
 
 export type ConfigValidationResult = {
@@ -40,6 +42,9 @@ export function validateRuntimeConfig(opts: {
   mediaRoot?: string;
   digiCoreBaseUrl?: string;
   ddiBaseUrl?: string;
+  internalProvisionToken?: string;
+  primitivesServiceToken?: string;
+  primitivesMode?: string;
 }): ConfigValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -81,6 +86,26 @@ export function validateRuntimeConfig(opts: {
     }
     if (!opts.ddiBaseUrl) {
       errors.push("Production DDI_BASE_URL is required for Personal Digital Infrastructure");
+    }
+    // /internal/distributor/provision trusts this bearer to create tenants and owner accounts.
+    if (
+      !opts.internalProvisionToken ||
+      UNSAFE_SECRETS.has(opts.internalProvisionToken) ||
+      opts.internalProvisionToken.length < 32
+    ) {
+      errors.push("Production INTERNAL_PROVISION_TOKEN must be a strong secret (≥32 chars, not a default)");
+    }
+    if (
+      !opts.primitivesServiceToken ||
+      UNSAFE_SECRETS.has(opts.primitivesServiceToken) ||
+      opts.primitivesServiceToken.length < 32
+    ) {
+      errors.push("Production PRIMITIVES_SERVICE_TOKEN must be a strong secret (≥32 chars, not a default)");
+    }
+    // Local primitives are in-process stand-ins: the FundzMan one reports payments as
+    // settled without moving money, so invoices would be marked paid falsely.
+    if (opts.primitivesMode !== "remote") {
+      errors.push("Production requires PRIMITIVES_MODE=remote (local stand-ins fake payments and messaging)");
     }
   } else if (env === "development") {
     if (opts.sessionSecret && UNSAFE_SECRETS.has(opts.sessionSecret)) {

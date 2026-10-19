@@ -191,8 +191,33 @@ test("Wave E: production config rejects sqlite, weak secrets, demo guest, mock e
     mediaRoot: "/var/lib/hospitalityos/media",
     digiCoreBaseUrl: "https://digi.example.test",
     ddiBaseUrl: "https://ddi.example.test",
+    internalProvisionToken: "p".repeat(32) + "-provision",
+    primitivesServiceToken: "s".repeat(32) + "-primitives",
+    primitivesMode: "remote",
   });
-  assert.equal(good.ok, true);
+  assert.equal(good.ok, true, good.errors.join("; "));
+
+  const devTokens = validateRuntimeConfig({
+    env: "production",
+    databaseUrl: "postgresql://hos:hos@localhost:5432/hos",
+    sessionSecret: "a".repeat(32) + "-strong-production-secret",
+    webhookSecret: "webhook-secret-strong",
+    allowDemoGuest: false,
+    emailProvider: "smtp",
+    smtpUrl: "smtp://user:pass@smtp.example.com:587",
+    smtpFrom: "noreply@example.com",
+    mediaSigningSecret: "m".repeat(32) + "-media-signing",
+    mediaRoot: "/var/lib/hospitalityos/media",
+    digiCoreBaseUrl: "https://digi.example.test",
+    ddiBaseUrl: "https://ddi.example.test",
+    internalProvisionToken: "dev-primitives-token",
+    primitivesServiceToken: "dev-primitives-token",
+    primitivesMode: "local",
+  });
+  assert.equal(devTokens.ok, false);
+  assert.ok(devTokens.errors.some((e) => e.includes("INTERNAL_PROVISION_TOKEN")));
+  assert.ok(devTokens.errors.some((e) => e.includes("PRIMITIVES_SERVICE_TOKEN")));
+  assert.ok(devTokens.errors.some((e) => e.includes("PRIMITIVES_MODE")));
 
   const consoleBanned = validateRuntimeConfig({
     env: "production",

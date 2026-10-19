@@ -68,7 +68,8 @@ const cookieOpts = {
   path: "/",
   httpOnly: true,
   sameSite: "lax" as const,
-  secure: false,
+  // Session cookies must never travel over plain HTTP in production.
+  secure: config.env === "production",
 };
 
 export async function registerRoutes(app: FastifyInstance) {

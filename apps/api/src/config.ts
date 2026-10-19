@@ -101,6 +101,9 @@ const validation = validateRuntimeConfig({
   mediaRoot: config.mediaRoot,
   digiCoreBaseUrl: config.digiCoreBaseUrl,
   ddiBaseUrl: config.ddiBaseUrl,
+  internalProvisionToken: config.internalProvisionToken,
+  primitivesServiceToken: config.primitivesServiceToken,
+  primitivesMode: config.primitivesMode,
 });
 
 if (config.env === "production" && !config.skipProductionAssert) {
