@@ -4,10 +4,12 @@ import { hashPassword } from "../lib/crypto.js";
 import { writeAudit } from "../lib/audit.js";
 import { toStaffPublic } from "../lib/mappers.js";
 import { stripProtectedFields } from "../lib/protected-fields.js";
+import { assertMayManageRole, assertNotLastActiveOwner } from "./staff-privilege.js";
 
 export async function createStaffMember(opts: {
   tenantId: string;
   actorId: string;
+  actorRole: string;
   displayName: string;
   email: string;
   password?: string;
@@ -21,6 +23,7 @@ export async function createStaffMember(opts: {
       statusCode: 400,
     });
   }
+  assertMayManageRole(opts.actorRole, opts.role);
   if (!opts.password && !opts.trustId) {
     throw Object.assign(new Error("Staff requires a password or TrustID link"), {
       code: "validation_error",
@@ -109,6 +112,7 @@ export async function updateStaffMember(opts: {
   tenantId: string;
   staffId: string;
   actorId: string;
+  actorRole: string;
   rawBody: Record<string, unknown>;
 }) {
   const existing = await prisma.staffMember.findFirst({
@@ -117,6 +121,14 @@ export async function updateStaffMember(opts: {
   if (!existing) {
     throw Object.assign(new Error("Staff not found"), { code: "not_found", statusCode: 404 });
   }
+  const self = existing.id === opts.actorId;
+  if (self && (opts.rawBody.role !== undefined || opts.rawBody.status !== undefined)) {
+    throw Object.assign(new Error("You cannot change your own role or status"), {
+      code: "forbidden",
+      statusCode: 403,
+    });
+  }
+  if (!self) assertMayManageRole(opts.actorRole, existing.role);
 
   // Mass-assignment protection: only allow known safe fields from a stripped body.
   const safe = stripProtectedFields(opts.rawBody);
@@ -144,6 +156,7 @@ export async function updateStaffMember(opts: {
         statusCode: 400,
       });
     }
+    assertMayManageRole(opts.actorRole, opts.rawBody.role);
     data.role = opts.rawBody.role;
   }
   if (typeof opts.rawBody.status === "string" && ["active", "disabled", "invited"].includes(opts.rawBody.status)) {
@@ -168,11 +181,25 @@ export async function updateStaffMember(opts: {
   if (typeof opts.rawBody.password === "string" && opts.rawBody.password.length >= 8) {
     data.passwordHash = hashPassword(opts.rawBody.password);
   }
+  if ((data.role && data.role !== "owner") || (data.status && data.status !== "active")) {
+    await assertNotLastActiveOwner(opts.tenantId, existing);
+  }
 
   const staff = await prisma.staffMember.update({
     where: { id: existing.id },
     data,
   });
+
+  // Sessions carry the role they were issued with; end them when the role,
+  // status or password changes so the change takes effect immediately.
+  const roleChanged = data.role !== undefined && data.role !== existing.role;
+  const statusChanged = data.status !== undefined && data.status !== existing.status;
+  if (roleChanged || statusChanged || data.passwordHash) {
+    await prisma.staffSession.updateMany({
+      where: { staffId: staff.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
 
   await writeAudit({
     tenantId: opts.tenantId,
@@ -195,6 +222,7 @@ export async function deactivateStaffMember(opts: {
   tenantId: string;
   staffId: string;
   actorId: string;
+  actorRole: string;
 }) {
   if (opts.staffId === opts.actorId) {
     throw Object.assign(new Error("Cannot deactivate your own account"), {
@@ -208,6 +236,8 @@ export async function deactivateStaffMember(opts: {
   if (!existing) {
     throw Object.assign(new Error("Staff not found"), { code: "not_found", statusCode: 404 });
   }
+  assertMayManageRole(opts.actorRole, existing.role);
+  await assertNotLastActiveOwner(opts.tenantId, existing);
 
   const staff = await prisma.staffMember.update({
     where: { id: existing.id },

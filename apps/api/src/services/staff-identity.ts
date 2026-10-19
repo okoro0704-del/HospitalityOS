@@ -1,6 +1,7 @@
 import { prisma } from "../db.js";
 import { writeAudit } from "../lib/audit.js";
 import { toStaffPublic } from "../lib/mappers.js";
+import { assertMayManageRole } from "./staff-privilege.js";
 
 /**
  * Resolve staff membership for a TrustID subject within a tenant.
@@ -37,6 +38,7 @@ export async function linkStaffTrustId(opts: {
   tenantId: string;
   staffId: string;
   actorId: string;
+  actorRole: string;
   trustId: string;
 }) {
   if (!opts.trustId.startsWith("TID-")) {
@@ -51,6 +53,9 @@ export async function linkStaffTrustId(opts: {
   if (!existing) {
     throw Object.assign(new Error("Staff not found"), { code: "not_found", statusCode: 404 });
   }
+  // Linking an identity to someone else's membership is how a TrustID login
+  // would take that account over, so it needs authority over its role.
+  if (existing.id !== opts.actorId) assertMayManageRole(opts.actorRole, existing.role);
 
   const conflict = await prisma.staffIdentityLink.findFirst({
     where: {
@@ -132,6 +137,7 @@ export async function unlinkStaffTrustId(opts: {
   tenantId: string;
   staffId: string;
   actorId: string;
+  actorRole: string;
 }) {
   const existing = await prisma.staffMember.findFirst({
     where: { id: opts.staffId, tenantId: opts.tenantId },
@@ -139,6 +145,7 @@ export async function unlinkStaffTrustId(opts: {
   if (!existing) {
     throw Object.assign(new Error("Staff not found"), { code: "not_found", statusCode: 404 });
   }
+  if (existing.id !== opts.actorId) assertMayManageRole(opts.actorRole, existing.role);
 
   await prisma.staffIdentityLink.updateMany({
     where: { tenantId: opts.tenantId, staffId: opts.staffId, status: "active" },

@@ -797,6 +797,7 @@ export async function registerRoutes(app: FastifyInstance) {
         tenantId: req.tenantId!,
         actorId: auth.staffId,
         ...body,
+        actorRole: auth.role,
       });
       return reply.code(201).send({ staff });
     } catch (err) {
@@ -820,6 +821,7 @@ export async function registerRoutes(app: FastifyInstance) {
         tenantId: req.tenantId!,
         staffId: id,
         actorId: auth.staffId,
+        actorRole: auth.role,
         trustId: body.trustId,
       });
       return { staff: result.staff, link: { id: result.link.id, trustId: result.link.trustId } };
@@ -842,6 +844,7 @@ export async function registerRoutes(app: FastifyInstance) {
         tenantId: req.tenantId!,
         staffId: id,
         actorId: auth.staffId,
+        actorRole: auth.role,
       });
       return { staff };
     } catch (err) {
@@ -878,6 +881,7 @@ export async function registerRoutes(app: FastifyInstance) {
         tenantId: req.tenantId!,
         staffId: id,
         actorId: auth.staffId,
+        actorRole: auth.role,
         rawBody: raw,
       });
       return { staff };
@@ -900,6 +904,7 @@ export async function registerRoutes(app: FastifyInstance) {
         tenantId: req.tenantId!,
         staffId: id,
         actorId: auth.staffId,
+        actorRole: auth.role,
       });
       return { staff };
     } catch (err) {
