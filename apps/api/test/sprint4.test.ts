@@ -21,6 +21,10 @@ import { clearOperationsModule } from "./helpers/cleanup-operations.js";
 import { clearCrmModule } from "./helpers/cleanup-crm.js";
 import { clearNotificationsModule } from "./helpers/cleanup-notifications.js";
 import { clearBillingModule } from "./helpers/cleanup-billing.js";
+import { futureDates } from "./helpers/test-clock.js";
+
+/** Fixed test dates, kept in the future so booking-notice rules never expire the suite. */
+const at = futureDates("2026-10-01T10:00:00.000Z");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.resolve(__dirname, "..");
@@ -469,12 +473,27 @@ test("booking integration for services with availability links", async () => {
     headers: { authorization: `Bearer ${auth.token}` },
     payload: {
       customerId: seed.guest.id,
-      startsAt: "2026-10-01T10:00:00.000Z",
-      endsAt: "2026-10-01T11:00:00.000Z",
+      startsAt: at("2026-10-01T10:00:00.000Z"),
+      endsAt: at("2026-10-01T11:00:00.000Z"),
     },
   });
   assert.equal(booked.statusCode, 200, booked.body);
   assert.ok(booked.json().booking.id);
+
+  // The notice rule still applies: a slot that has already started is refused.
+  const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const past = await app.inject({
+    method: "POST",
+    url: `/commerce/services/${service.json().offering.id}/book`,
+    headers: { authorization: `Bearer ${auth.token}` },
+    payload: {
+      customerId: seed.guest.id,
+      startsAt: pastStart.toISOString(),
+      endsAt: new Date(pastStart.getTime() + 60 * 60 * 1000).toISOString(),
+    },
+  });
+  assert.equal(past.statusCode, 409, past.body);
+  assert.equal(past.json().error, "policy_violation");
 });
 
 test("tenant isolation on offerings", async () => {

@@ -21,6 +21,10 @@ import { clearOperationsModule } from "./helpers/cleanup-operations.js";
 import { clearCrmModule } from "./helpers/cleanup-crm.js";
 import { clearNotificationsModule } from "./helpers/cleanup-notifications.js";
 import { clearBillingModule } from "./helpers/cleanup-billing.js";
+import { futureDates } from "./helpers/test-clock.js";
+
+/** Fixed test dates, kept in the future so booking-notice rules never expire the suite. */
+const at = futureDates("2026-11-01T19:00:00.000Z");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.resolve(__dirname, "..");
@@ -277,7 +281,7 @@ test("reservation lifecycle uses booking engine", async () => {
       tableId: table.id,
       customerId: seed.guest.id,
       partySize: 2,
-      seatingAt: "2026-11-01T19:00:00.000Z",
+      seatingAt: at("2026-11-01T19:00:00.000Z"),
     },
   });
   assert.equal(created.statusCode, 200, created.body);
@@ -431,8 +435,8 @@ test("waitlist when table unavailable", async () => {
       tableId: table.id,
       customerId: seed.guest.id,
       partySize: 1,
-      seatingAt: "2026-11-02T19:00:00.000Z",
-      endsAt: "2026-11-02T21:00:00.000Z",
+      seatingAt: at("2026-11-02T19:00:00.000Z"),
+      endsAt: at("2026-11-02T21:00:00.000Z"),
     },
   });
 
@@ -455,8 +459,8 @@ test("waitlist when table unavailable", async () => {
       tableId: table.id,
       customerId: guest2.id,
       partySize: 1,
-      seatingAt: "2026-11-02T19:30:00.000Z",
-      endsAt: "2026-11-02T20:30:00.000Z",
+      seatingAt: at("2026-11-02T19:30:00.000Z"),
+      endsAt: at("2026-11-02T20:30:00.000Z"),
       joinWaitlistIfUnavailable: true,
     },
   });
@@ -544,7 +548,7 @@ test("guest can browse menus and reserve", async () => {
       diningAreaId: area.id,
       tableId: table.id,
       partySize: 2,
-      seatingAt: "2026-12-01T18:00:00.000Z",
+      seatingAt: at("2026-12-01T18:00:00.000Z"),
     },
   });
   assert.equal(reserved.statusCode, 200, reserved.body);

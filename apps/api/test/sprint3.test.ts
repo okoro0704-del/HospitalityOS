@@ -21,6 +21,10 @@ import { clearOperationsModule } from "./helpers/cleanup-operations.js";
 import { clearCrmModule } from "./helpers/cleanup-crm.js";
 import { clearNotificationsModule } from "./helpers/cleanup-notifications.js";
 import { clearBillingModule } from "./helpers/cleanup-billing.js";
+import { futureDates } from "./helpers/test-clock.js";
+
+/** Fixed test dates, kept in the future so booking-notice rules never expire the suite. */
+const at = futureDates("2026-12-01T08:00:00.000Z");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.resolve(__dirname, "..");
@@ -287,8 +291,8 @@ after(async () => {
 test("booking lifecycle: create -> transition -> cancel", async () => {
   const auth = await staffLogin("sunrise-hotel", "admin@sunrise.hotel");
   const resource = await bootstrapResource(auth);
-  const startsAt = "2027-02-01T10:00:00.000Z";
-  const endsAt = "2027-02-01T11:00:00.000Z";
+  const startsAt = at("2027-02-01T10:00:00.000Z");
+  const endsAt = at("2027-02-01T11:00:00.000Z");
 
   const created = await app.inject({
     method: "POST",
@@ -329,8 +333,8 @@ test("conflict detection prevents double booking", async () => {
   const resource = await bootstrapResource(auth);
   const payload = {
     moduleId: "events",
-    startsAt: "2027-04-15T10:00:00.000Z",
-    endsAt: "2027-04-15T12:00:00.000Z",
+    startsAt: at("2027-04-15T10:00:00.000Z"),
+    endsAt: at("2027-04-15T12:00:00.000Z"),
     items: [{ resourceId: resource.id }],
   };
 
@@ -368,8 +372,8 @@ test("conflict detection prevents double booking", async () => {
 test("availability and capacity validation", async () => {
   const auth = await staffLogin("sunrise-hotel", "admin@sunrise.hotel");
   const resource = await bootstrapResource(auth, { capacity: 2, code: `CAP-${Date.now()}` });
-  const startsAt = "2027-03-01T10:00:00.000Z";
-  const endsAt = "2027-03-01T11:00:00.000Z";
+  const startsAt = at("2027-03-01T10:00:00.000Z");
+  const endsAt = at("2027-03-01T11:00:00.000Z");
 
   const a = await app.inject({
     method: "POST",
@@ -425,8 +429,8 @@ test("blackout periods block availability", async () => {
     payload: {
       name: "Maintenance window",
       resourceId: resource.id,
-      startsAt: "2027-05-15T00:00:00.000Z",
-      endsAt: "2027-05-16T00:00:00.000Z",
+      startsAt: at("2027-05-15T00:00:00.000Z"),
+      endsAt: at("2027-05-16T00:00:00.000Z"),
       reason: "HVAC",
     },
   });
@@ -438,8 +442,8 @@ test("blackout periods block availability", async () => {
     headers: { authorization: `Bearer ${auth.token}` },
     payload: {
       moduleId: "events",
-      startsAt: "2027-05-15T10:00:00.000Z",
-      endsAt: "2027-05-15T11:00:00.000Z",
+      startsAt: at("2027-05-15T10:00:00.000Z"),
+      endsAt: at("2027-05-15T11:00:00.000Z"),
       items: [{ resourceId: resource.id }],
     },
   });
@@ -488,8 +492,8 @@ test("policies enforce min duration", async () => {
     headers: { authorization: `Bearer ${auth.token}` },
     payload: {
       moduleId: "events",
-      startsAt: "2026-12-01T08:00:00.000Z",
-      endsAt: "2026-12-01T09:00:00.000Z",
+      startsAt: at("2026-12-01T08:00:00.000Z"),
+      endsAt: at("2026-12-01T09:00:00.000Z"),
       items: [{ resourceId: resource.id }],
     },
   });
@@ -518,8 +522,8 @@ test("policies enforce min duration", async () => {
     headers: { authorization: `Bearer ${auth.token}` },
     payload: {
       moduleId: "events",
-      startsAt: "2026-12-02T10:00:00.000Z",
-      endsAt: "2026-12-02T10:30:00.000Z",
+      startsAt: at("2026-12-02T10:00:00.000Z"),
+      endsAt: at("2026-12-02T10:30:00.000Z"),
       items: [{ resourceId: resource.id }],
     },
   });
@@ -531,8 +535,8 @@ test("waitlist join and promotion on cancel", async () => {
   const seed = await resetDb();
   const auth = await staffLogin("sunrise-hotel", "admin@sunrise.hotel");
   const resource = await bootstrapResource(auth, { code: `WL-${Date.now()}` });
-  const startsAt = "2026-12-10T10:00:00.000Z";
-  const endsAt = "2026-12-10T11:00:00.000Z";
+  const startsAt = at("2026-12-10T10:00:00.000Z");
+  const endsAt = at("2026-12-10T11:00:00.000Z");
 
   const booked = await app.inject({
     method: "POST",
@@ -591,8 +595,8 @@ test("calendar generation for day/week/month", async () => {
     headers: { authorization: `Bearer ${auth.token}` },
     payload: {
       moduleId: "events",
-      startsAt: "2027-01-15T10:00:00.000Z",
-      endsAt: "2027-01-15T11:00:00.000Z",
+      startsAt: at("2027-01-15T10:00:00.000Z"),
+      endsAt: at("2027-01-15T11:00:00.000Z"),
       items: [{ resourceId: resource.id }],
     },
   });
@@ -662,8 +666,8 @@ test("accommodation compatibility: reservation links booking engine", async () =
       roomTypeId: seed.roomType.id,
       roomId: seed.room101.id,
       customerId: seed.guest.id,
-      checkInDate: "2027-02-01",
-      checkOutDate: "2027-02-03",
+      checkInDate: at("2027-02-01"),
+      checkOutDate: at("2027-02-03"),
       status: "confirmed",
     },
   });
@@ -730,8 +734,8 @@ test("guest PWA can browse, book, and cancel via engine", async () => {
     payload: {
       moduleId: "events",
       resourceId: resource.id,
-      startsAt: "2027-03-01T10:00:00.000Z",
-      endsAt: "2027-03-01T11:00:00.000Z",
+      startsAt: at("2027-03-01T10:00:00.000Z"),
+      endsAt: at("2027-03-01T11:00:00.000Z"),
     },
   });
   assert.equal(booked.statusCode, 200, booked.body);
