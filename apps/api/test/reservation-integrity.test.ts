@@ -174,8 +174,9 @@ test("one room, many simultaneous requests for the same nights: exactly one wins
   );
   const ok = results.filter((r) => r.statusCode === 200);
   const conflicts = results.filter((r) => r.statusCode === 409);
-  assert.equal(ok.length, 1, results.map((r) => `${r.statusCode}:${r.json().error ?? ""}`).join(","));
-  assert.equal(conflicts.length, CONCURRENCY - 1);
+  const summary = results.map((r) => `${r.statusCode}:${r.json().error ?? ""}`).join(",");
+  assert.equal(ok.length, 1, summary);
+  assert.equal(conflicts.length, CONCURRENCY - 1, summary);
   for (const r of conflicts) assert.equal(r.json().error, "room_unavailable");
   await assertNoDoubleBookedNights();
 });
@@ -189,8 +190,9 @@ test("room-type requests under contention fill every room once and never oversel
   assert.equal(ok.length, seed.rooms.length, "every available room is sold, none twice");
   const roomIds = new Set(ok.map((r) => r.json().reservation.roomId));
   assert.equal(roomIds.size, seed.rooms.length, "each success got a different room");
+  const summary = results.map((r) => `${r.statusCode}:${r.json().error ?? ""}`).join(",");
   for (const r of results.filter((x) => x.statusCode !== 200)) {
-    assert.equal(r.statusCode, 409);
+    assert.equal(r.statusCode, 409, summary);
     assert.equal(r.json().error, "room_unavailable");
   }
   await assertNoDoubleBookedNights();

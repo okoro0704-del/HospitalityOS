@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { prisma } from "../db.js";
+import { config } from "../config.js";
 
 /**
  * Room-night ledger.
@@ -87,9 +88,32 @@ function isRetryable(err: unknown): boolean {
 }
 
 /**
- * Run `fn` in one interactive transaction, retrying the errors above with jitter.
- * Every other error — including a room-night conflict — propagates after the
- * transaction has rolled back, so nothing it wrote survives.
+ * SQLite (development and tests only) has a single writer: concurrent write transactions
+ * fail with busy/deadlock errors rather than waiting their turn. Queue reservation
+ * transactions in-process there. PostgreSQL is not queued — its row locks and the
+ * room-night unique index arbitrate concurrent transactions.
+ */
+let sqliteQueue: Promise<unknown> = Promise.resolve();
+function queuedOnSqlite<T>(work: () => Promise<T>): Promise<T> {
+  if (!config.databaseUrl.startsWith("file:")) return work();
+  const run = sqliteQueue.then(work, work);
+  sqliteQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** Transient contention outlasted the retries: the client may retry; nothing was written. */
+export function reservationBusy() {
+  return Object.assign(new Error("Reservations are busy right now; please retry shortly"), {
+    code: "reservation_busy",
+    statusCode: 503,
+  });
+}
+
+/**
+ * Run `fn` in one interactive transaction, retrying the errors above with exponential
+ * backoff and jitter. Every other error — including a room-night conflict — propagates
+ * after the transaction has rolled back, so nothing it wrote survives. Contention that
+ * outlasts the retries becomes `503 reservation_busy`, never a client error.
  */
 export async function inReservationTransaction<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
@@ -97,10 +121,12 @@ export async function inReservationTransaction<T>(
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await prisma.$transaction(fn, { maxWait: 15_000, timeout: 30_000 });
+      return await queuedOnSqlite(() => prisma.$transaction(fn, { maxWait: 15_000, timeout: 30_000 }));
     } catch (err) {
-      if (attempt >= attempts || !isRetryable(err)) throw err;
-      await new Promise((r) => setTimeout(r, 15 * attempt + Math.floor(Math.random() * 40)));
+      if (!isRetryable(err)) throw err;
+      if (attempt >= attempts) throw reservationBusy();
+      const backoff = Math.min(1_500, 40 * 2 ** (attempt - 1));
+      await new Promise((r) => setTimeout(r, backoff + Math.floor(Math.random() * 50)));
     }
   }
 }
