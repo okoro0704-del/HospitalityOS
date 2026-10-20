@@ -1,13 +1,19 @@
 /**
  * Environment validation — production must not start with unsafe defaults.
  */
-export type AppEnv = "development" | "test" | "production";
+export type AppEnv = "development" | "test" | "staging" | "production";
 
 export function resolveAppEnv(): AppEnv {
   const raw = (process.env.HOS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
   if (raw === "production" || raw === "prod") return "production";
+  if (raw === "staging" || raw === "stage") return "staging";
   if (raw === "test") return "test";
   return "development";
+}
+
+/** Deployed environments: PostgreSQL only, strong secrets, migrations verified before serving. */
+export function isDeployedEnv(env: AppEnv): boolean {
+  return env === "production" || env === "staging";
 }
 
 const UNSAFE_SECRETS = new Set([
@@ -45,23 +51,66 @@ export function validateRuntimeConfig(opts: {
   internalProvisionToken?: string;
   primitivesServiceToken?: string;
   primitivesMode?: string;
+  stagingAccessToken?: string;
 }): ConfigValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const { env } = opts;
 
-  if (env === "production") {
+  if (isDeployedEnv(env)) {
+    // Shared by production and staging: a deployed API only ever runs on PostgreSQL with real secrets.
+    const label = env === "production" ? "Production" : "Staging";
     if (!opts.databaseUrl || opts.databaseUrl.startsWith("file:")) {
-      errors.push("Production requires PostgreSQL DATABASE_URL (sqlite file: URLs are forbidden)");
+      errors.push(`${label} requires PostgreSQL DATABASE_URL (sqlite file: URLs are forbidden)`);
     } else if (!opts.databaseUrl.startsWith("postgresql://") && !opts.databaseUrl.startsWith("postgres://")) {
-      errors.push("Production DATABASE_URL must be a postgresql:// or postgres:// connection string");
+      errors.push(`${label} DATABASE_URL must be a postgresql:// or postgres:// connection string`);
     }
-
     if (!opts.sessionSecret || UNSAFE_SECRETS.has(opts.sessionSecret) || opts.sessionSecret.length < 32) {
-      errors.push("Production SESSION_SECRET must be a strong secret (≥32 chars, not a default)");
+      errors.push(`${label} SESSION_SECRET must be a strong secret (≥32 chars, not a default)`);
     }
     if (!opts.webhookSecret || UNSAFE_SECRETS.has(opts.webhookSecret) || opts.webhookSecret.length < 16) {
-      errors.push("Production WEBHOOK_SECRET must be set to a non-default value");
+      errors.push(`${label} WEBHOOK_SECRET must be set to a non-default value`);
+    }
+    if (!opts.mediaSigningSecret || opts.mediaSigningSecret.length < 32 || UNSAFE_SECRETS.has(opts.mediaSigningSecret)) {
+      errors.push(`${label} MEDIA_SIGNING_SECRET must be a strong secret (≥32 chars)`);
+    }
+    // /internal/distributor/provision trusts this bearer to create tenants and owner accounts.
+    if (
+      !opts.internalProvisionToken ||
+      UNSAFE_SECRETS.has(opts.internalProvisionToken) ||
+      opts.internalProvisionToken.length < 32
+    ) {
+      errors.push(`${label} INTERNAL_PROVISION_TOKEN must be a strong secret (≥32 chars, not a default)`);
+    }
+    if (
+      !opts.primitivesServiceToken ||
+      UNSAFE_SECRETS.has(opts.primitivesServiceToken) ||
+      opts.primitivesServiceToken.length < 32
+    ) {
+      errors.push(`${label} PRIMITIVES_SERVICE_TOKEN must be a strong secret (≥32 chars, not a default)`);
+    }
+  }
+
+  if (env === "staging") {
+    // Staging is isolated: synthetic data, no live payments, messaging, Portal or PDI connections,
+    // and no anonymous access. Local primitives are the only way to guarantee no real money moves.
+    if (opts.primitivesMode !== "local") {
+      errors.push("Staging requires PRIMITIVES_MODE=local (remote primitives reach live payment and messaging services)");
+    }
+    if (opts.emailProvider !== "mock" && opts.emailProvider !== "console") {
+      errors.push("Staging EMAIL_PROVIDER must be mock or console (no real email from staging)");
+    }
+    if (opts.digiCoreBaseUrl || opts.ddiBaseUrl) {
+      errors.push("Staging must not set DIGI_CORE_BASE_URL or DDI_BASE_URL (no live PDI connections)");
+    }
+    if (!opts.stagingAccessToken || opts.stagingAccessToken.length < 32 || UNSAFE_SECRETS.has(opts.stagingAccessToken)) {
+      errors.push("Staging HOS_STAGING_ACCESS_TOKEN must be a strong secret (≥32 chars); every non-health request must present it");
+    }
+  }
+
+  if (env === "production") {
+    if (opts.stagingAccessToken) {
+      errors.push("Production must not set HOS_STAGING_ACCESS_TOKEN");
     }
     if (opts.allowDemoGuest) {
       errors.push("Production must set ALLOW_DEMO_GUEST=false");
@@ -75,9 +124,6 @@ export function validateRuntimeConfig(opts: {
     if (opts.emailProvider === "smtp" && (!opts.smtpFrom || opts.smtpFrom.includes("hospitalityos.local"))) {
       errors.push("Production SMTP_FROM must be set to a real sender identity");
     }
-    if (!opts.mediaSigningSecret || opts.mediaSigningSecret.length < 32 || UNSAFE_SECRETS.has(opts.mediaSigningSecret)) {
-      errors.push("Production MEDIA_SIGNING_SECRET must be a strong secret (≥32 chars)");
-    }
     if (!opts.mediaRoot) {
       errors.push("Production MEDIA_ROOT must be set for private media storage");
     }
@@ -86,21 +132,6 @@ export function validateRuntimeConfig(opts: {
     }
     if (!opts.ddiBaseUrl) {
       errors.push("Production DDI_BASE_URL is required for Personal Digital Infrastructure");
-    }
-    // /internal/distributor/provision trusts this bearer to create tenants and owner accounts.
-    if (
-      !opts.internalProvisionToken ||
-      UNSAFE_SECRETS.has(opts.internalProvisionToken) ||
-      opts.internalProvisionToken.length < 32
-    ) {
-      errors.push("Production INTERNAL_PROVISION_TOKEN must be a strong secret (≥32 chars, not a default)");
-    }
-    if (
-      !opts.primitivesServiceToken ||
-      UNSAFE_SECRETS.has(opts.primitivesServiceToken) ||
-      opts.primitivesServiceToken.length < 32
-    ) {
-      errors.push("Production PRIMITIVES_SERVICE_TOKEN must be a strong secret (≥32 chars, not a default)");
     }
     // Local primitives are in-process stand-ins: the FundzMan one reports payments as
     // settled without moving money, so invoices would be marked paid falsely.
@@ -122,7 +153,7 @@ export function assertProductionSafe(result: ConfigValidationResult) {
   }
   if (!result.ok) {
     const msg = [
-      "HospitalityOS refused to start: unsafe production configuration.",
+      `HospitalityOS refused to start: unsafe ${result.env} configuration.`,
       ...result.errors.map((e) => `  - ${e}`),
       "See docs/PRODUCTION_DEPLOYMENT.md",
     ].join("\n");

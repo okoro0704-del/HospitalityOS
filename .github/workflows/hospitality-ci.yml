@@ -1,0 +1,89 @@
+name: HospitalityOS CI
+
+on:
+  push:
+    branches: ["recovery/**", "h1/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hospitality-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sqlite-suite:
+    name: Typecheck, build and full API suite (SQLite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies (lockfile)
+        run: npm ci --ignore-scripts
+      - name: Generate the development (SQLite) Prisma client
+        run: npm run db:generate
+      - name: Typecheck API, guest PWA and staff web
+        run: npm run typecheck
+      - name: Build staff web, guest PWA and API
+        run: |
+          npm run build -w @hospitalityos/staff-web
+          npm run build -w @hospitalityos/guest-pwa
+          npm run build -w @hospitalityos/api
+      - name: Full API test suite
+        env:
+          # Needs a DDI-migrated database and pinned DDI, TrustID and ElfCom checkouts
+          # (see pdi-communication-verification.yml). Reported as BLOCKED, never as passed.
+          HOS_TEST_BLOCKED: pdi-cross-repo.e2e.test.ts
+        run: npm test
+      - name: Report the environment-blocked test
+        run: echo "::notice title=BLOCKED::pdi-cross-repo.e2e.test.ts was not run (needs a DDI database and pinned sibling repositories)."
+
+  postgres-deploy:
+    name: PostgreSQL build, migrations, startup and reservation integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hos_ci
+          POSTGRES_PASSWORD: hos_ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hos_ci -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      HOS_PG_ADMIN_URL: postgresql://hos_ci:hos_ci@127.0.0.1:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies (lockfile)
+        run: npm ci --ignore-scripts
+      - name: Deployed build (PostgreSQL Prisma client)
+        run: npm run build:api:pg
+      - name: Migrations, concurrent deploys and startup refusal
+        working-directory: apps/api
+        run: node --import tsx --test --test-concurrency=1 test/postgres/deploy-migrations.pg.test.ts
+      - name: Reservation integrity on PostgreSQL
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql://hos_ci:hos_ci@127.0.0.1:5432/hos_integrity
+          HOS_INTEGRITY_DATABASE_URL: postgresql://hos_ci:hos_ci@127.0.0.1:5432/hos_integrity?connection_limit=30
+          HOS_INTEGRITY_CONCURRENCY: "24"
+        run: |
+          node -e "const pg=require('pg');const c=new pg.Client({connectionString:process.env.HOS_PG_ADMIN_URL+'/postgres'});c.connect().then(()=>c.query('CREATE DATABASE hos_integrity')).then(()=>c.end())"
+          npm run db:migrate:deploy
+          node --import tsx --test --test-concurrency=1 test/reservation-integrity.test.ts

@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import { config } from "./config.js";
 import { registerRoutes } from "./routes.js";
@@ -40,6 +40,24 @@ export async function buildApp() {
       reply.header("x-correlation-id", req.id);
     }
   });
+
+  if (config.stagingAccessToken) {
+    // Staging is never usable anonymously: only liveness and readiness are open.
+    const expected = Buffer.from(config.stagingAccessToken);
+    app.addHook("onRequest", async (req, reply) => {
+      const route = req.url.split("?")[0];
+      if ((req.method === "GET" || req.method === "HEAD") && (route === "/health" || route === "/ready")) return;
+      const presented = req.headers["x-hos-access"];
+      const given = Buffer.from(typeof presented === "string" ? presented : "");
+      if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+        return reply.code(401).send({
+          error: "staging_access_required",
+          message: "This is a restricted staging environment.",
+          requestId: req.id,
+        });
+      }
+    });
+  }
 
   app.setErrorHandler((err, req, reply) => {
     const requestId = req.id;

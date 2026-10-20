@@ -15,6 +15,8 @@ import {
   type PlatformAuth,
 } from "./lib/auth.js";
 import { requirePermission } from "./lib/permissions.js";
+import { isDeployedEnv } from "./lib/env-validate.js";
+import { checkMigrations } from "./lib/migration-status.js";
 import { branchIdFilter, assertBranchAccess } from "./lib/branch-scope.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
 import { prisma } from "./db.js";
@@ -68,8 +70,8 @@ const cookieOpts = {
   path: "/",
   httpOnly: true,
   sameSite: "lax" as const,
-  // Session cookies must never travel over plain HTTP in production.
-  secure: config.env === "production",
+  // Session cookies must never travel over plain HTTP in a deployed environment.
+  secure: isDeployedEnv(config.env),
 };
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -82,22 +84,27 @@ export async function registerRoutes(app: FastifyInstance) {
     time: new Date().toISOString(),
   }));
 
-  /** Readiness — verifies database connectivity without leaking infrastructure details. */
+  /**
+   * Readiness — verifies database connectivity and, on PostgreSQL, that every migration shipped
+   * with this build has finished. No infrastructure details are returned.
+   */
   app.get("/ready", async (_req, reply) => {
+    let database = "error";
+    let migrations = "error";
     try {
       await prisma.$queryRaw`SELECT 1`;
-      return {
-        status: "ready" as const,
-        checks: { database: "ok" },
-        time: new Date().toISOString(),
-      };
+      database = "ok";
+      migrations = (await checkMigrations(prisma, config.databaseUrl)).state;
     } catch {
-      return reply.code(503).send({
-        status: "not_ready",
-        checks: { database: "error" },
-        time: new Date().toISOString(),
-      });
+      // database stays "error"
     }
+    const migrationsReady = migrations === "ok" || (migrations === "skipped" && !isDeployedEnv(config.env));
+    const ready = database === "ok" && migrationsReady;
+    return reply.code(ready ? 200 : 503).send({
+      status: ready ? "ready" : "not_ready",
+      checks: { database, migrations },
+      time: new Date().toISOString(),
+    });
   });
 
   await registerAccommodationRoutes(app);

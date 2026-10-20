@@ -15,6 +15,14 @@ const apiRoot = path.resolve(__dirname, "..");
 const schemaSrc = path.join(apiRoot, "prisma", "schema.prisma");
 const schemaOut = path.join(apiRoot, "prisma", "schema.postgres.generated.prisma");
 
+const hosEnv = (process.env.HOS_ENV ?? process.env.NODE_ENV ?? "").toLowerCase();
+if (["production", "prod", "staging", "stage"].includes(hosEnv)) {
+  // db push rewrites a schema without migration history and can drop data. Deployed
+  // databases change only through versioned migrations: npm run db:migrate:deploy.
+  console.error(`Refusing to push a schema in ${hosEnv}. Use versioned migrations (db:migrate:deploy).`);
+  process.exit(1);
+}
+
 const url = process.env.DATABASE_URL ?? process.env.DIRECT_DATABASE_URL ?? "";
 if (!url.startsWith("postgresql://") && !url.startsWith("postgres://")) {
   console.error("pg-push requires DATABASE_URL (or DIRECT_DATABASE_URL) to be a postgres:// URL");

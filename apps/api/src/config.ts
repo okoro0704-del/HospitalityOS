@@ -1,4 +1,4 @@
-import { resolveAppEnv, validateRuntimeConfig, assertProductionSafe } from "./lib/env-validate.js";
+import { resolveAppEnv, validateRuntimeConfig, assertProductionSafe, isDeployedEnv } from "./lib/env-validate.js";
 
 const appEnv = resolveAppEnv();
 
@@ -6,9 +6,14 @@ const emailProvider = (process.env.EMAIL_PROVIDER ?? (appEnv === "production" ? 
 
 export const config = {
   env: appEnv,
-  port: Number(process.env.HOS_PORT ?? 8800),
+  port: Number(process.env.HOS_PORT ?? process.env.PORT ?? 8800),
   host: process.env.HOS_HOST ?? "0.0.0.0",
-  databaseUrl: process.env.DATABASE_URL ?? (appEnv === "production" ? "" : "file:./dev.db"),
+  databaseUrl: process.env.DATABASE_URL ?? (isDeployedEnv(appEnv) ? "" : "file:./dev.db"),
+  /**
+   * Staging only: every request except /health and /ready must present this value in the
+   * `x-hos-access` header, so a staging URL is never usable anonymously.
+   */
+  stagingAccessToken: process.env.HOS_STAGING_ACCESS_TOKEN ?? "",
   /** Optional direct URL for migrations behind a pooler. */
   directDatabaseUrl: process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL ?? "",
   sessionSecret: process.env.SESSION_SECRET ?? "dev-only-session-secret-change-me",
@@ -104,9 +109,10 @@ const validation = validateRuntimeConfig({
   internalProvisionToken: config.internalProvisionToken,
   primitivesServiceToken: config.primitivesServiceToken,
   primitivesMode: config.primitivesMode,
+  stagingAccessToken: config.stagingAccessToken,
 });
 
-if (config.env === "production" && !config.skipProductionAssert) {
+if (isDeployedEnv(config.env) && !config.skipProductionAssert) {
   assertProductionSafe(validation);
 } else if (validation.warnings.length && config.env !== "test") {
   for (const w of validation.warnings) console.warn(`[config] ${w}`);
